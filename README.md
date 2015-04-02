@@ -43,7 +43,7 @@ RA, dec, H = 65.958212307 deg, 21.6806308847 deg, 353.859123093 deg
 ```
 
 Example usage in code:
-```
+```python
 from pylab import *
 from sunposition import sun_position
 from datetime import datetime
