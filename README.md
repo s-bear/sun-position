@@ -70,3 +70,7 @@ cb.set_label('Elevation Angle (deg)')
 gca().set_aspect('equal')
 xticks(arange(-180,181,45)); yticks(arange(-90,91,45))
 ```
+
+Citation:
+Ibrahim Reda, Afshin Andreas, Solar position algorithm for solar radiation applications, Solar Energy, Volume 76, Issue 5, 2004, Pages 577-589, ISSN 0038-092X, http://dx.doi.org/10.1016/j.solener.2003.12.003.
+Keywords: Global solar irradiance; Solar zenith angle; Solar azimuth angle; VSOP87 theory; Universal time; ΔUT1
