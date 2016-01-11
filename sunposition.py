@@ -421,18 +421,26 @@ def sun_position(dt, latitude, longitude, elevation, temperature=None, pressure=
     return res
 
 def main(args):
-    print("Computing sun position at T = %s + %s s" % (args.t, args.dt))
-    print("Lat, Long, Elev = %s deg, %s deg, %s m" % (args.lat, args.lon, args.elev))
-    print("T, P = %s C, %s mbar" % (args.temp, args.p))
-    az, zen, ra, dec, h = sun_position(args.t, args.lat, args.lon, args.elev, args.temp, args.p, args.dt)
-    print("Results:")
-    print("Azimuth, zenith = %s deg, %s deg" % (az,zen))
-    print("RA, dec, H = %s deg, %s deg, %s deg" % (ra, dec, h))
+    az, zen, ra, dec, h = sun_position(args.t, args.lat, args.lon, args.elev, args.temp, args.p, args.dt, args.rad)
+    if args.csv:
+        #machine readable
+        print('{t}, {dt}, {lat}, {lon}, {elev}, {temp}, {p}, {az}, {zen}, {ra}, {dec}, {h}'.format(t=args.t, dt=args.dt, lat=args.lat, lon=args.lon, elev=args.elev,temp=args.temp, p=args.p,az=az, zen=zen, ra=ra, dec=dec, h=h))
+    else:
+        dr='deg'
+        if args.rad:
+            dr='rad'
+        print("Computing sun position at T = {t} + {dt} s".format(t=args.t, dt=args.dt))
+        print("Lat, Lon, Elev = {lat} deg, {lon} deg, {elev} m".format(lat=args.lat, lon=args.lon, elev=args.elev))
+        print("T, P = {temp} C, {press} mbar".format(temp=args.temp, press=args.p))
+        print("Results:")
+        print("Azimuth, zenith = {az} {dr}, {zen} {dr}".format(az=az,zen=zen,dr=dr))
+        print("RA, dec, H = {ra} {dr}, {dec} {dr}, {h} {dr}".format(ra=ra, dec=dec, h=h, dr=dr))
 
 if __name__ == '__main__':
     from argparse import ArgumentParser
     import datetime
-    parser = ArgumentParser(description='Compute sun position parameters given the time and location')
+    parser = ArgumentParser(prog='sunposition',description='Compute sun position parameters given the time and location')
+    parser.add_argument('--version',action='version',version='%(prog)s 1.0')
     parser.add_argument('-t,--time',dest='t',type=str,default='now',help='"now" or date and time (UTC) in "YYYY-MM-DD hh:mm:ss.ssssss" format or a (UTC) POSIX timestamp')
     parser.add_argument('-lat,--latitude',dest='lat',type=float,default=51.48,help='latitude, in decimal degrees, positive for north')
     parser.add_argument('-lon,--longitude',dest='lon',type=float,default=0.0,help='longitude, in decimal degrees, positive for east')
@@ -440,6 +448,8 @@ if __name__ == '__main__':
     parser.add_argument('-T,--temperature',dest='temp',type=float,default=14.6,help='temperature, in degrees celcius')
     parser.add_argument('-p,--pressure',dest='p',type=float,default=1013.0,help='atmospheric pressure, in millibar')
     parser.add_argument('-dt',type=float,default=0.0,help='difference between earth\'s rotation time (TT) and universal time (UT1)')
+    parser.add_argument('-r,--radians',dest='rad',action='store_true',help='Output in radians instead of degrees')
+    parser.add_argument('--csv',dest='csv',action='store_true',help='Comma separated values (time,dt,lat,lon,elev,temp,pressure,az,zen,RA,dec,H)')
     args = parser.parse_args()
     if args.t == "now":
         args.t = datetime.datetime.utcnow()
