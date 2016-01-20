@@ -318,11 +318,14 @@ class _sp:
         phi, sigma, E = latitude, longitude, elevation
         #equatorial horizontal parallax of the sun, in radians
         xi = np.deg2rad(8.794/(3600*R)) #
-
+        #rho = distance from center of earth in units of the equatorial radius
+        #phi-prime = geocentric latitude
+        #NB: These equations look like their based on WGS-84, but are rounded slightly
+        # The WGS-84 reference ellipsoid has major axis a = 6378137 m, and flattening factor 1/f = 298.257223563
+        # minor axis b = a*(1-f) = 6356752.3142 = 0.996647189335*a
         u = np.arctan(0.99664719*np.tan(phi)) #
-
-        x = np.cos(u) + E*np.cos(phi)/6378140 #
-        y = 0.99664719*np.sin(u) + E*np.sin(phi)/6378140 #
+        x = np.cos(u) + E*np.cos(phi)/6378140 #rho sin(phi-prime)
+        y = 0.99664719*np.sin(u) + E*np.sin(phi)/6378140 #rho cos(phi-prime)
 
         delta_psi, epsilon = _sp.nutation_obliquity(jce) #
 
