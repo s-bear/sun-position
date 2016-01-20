@@ -381,25 +381,139 @@ class _sp:
             lon = lon % 360
         return lat,lon
 
-def sun_position(dt, latitude, longitude, elevation, temperature=None, pressure=None, delta_t=0, radians=False):
-    """Compute the coordinates of the sun as viewed at the given time and location.
+    @staticmethod
+    def topo_pos(t,lat,lon,elev,temp,press,dt):
+        """compute RA,dec,H, all in degrees"""
+        lat,lon = _sp.norm_lat_lon(lat,lon)
+        jd = _sp.julian_day(t)
+        RA, dec, H = _sp.sun_topo_ra_decl_hour(lat, lon, elev, jd, dt)
+        return RA, dec, H
 
-    Arguments:
-    dt -- UTC datetime object or UTC timestamp (as per datetime.utcfromtimestamp) representing the time of observation
-    latitude -- in decimal degrees, positive for north of the equator
-    longitude -- in decimal degrees, positive for east of Greenwich
-    elevation -- in meters, above ??
-    temperature -- in celcius, default is 14.6 (global average in 2013)
-    pressure -- in millibar, default is 1013 (global average in ??)
-    delta_t -- in seconds, difference between the earth's rotation time (TT) and universal time (UT)
-    radians -- return results in radians if True, degrees if False (default)
+    @staticmethod
+    def pos(t,lat,lon,elev,temp,press,dt):
+        """Compute azimute,zenith,RA,dec,H all in degrees"""
+        lat,lon = _sp.norm_lat_lon(lat,lon)
+        jd = _sp.julian_day(t)
+        RA, dec, H = _sp.sun_topo_ra_decl_hour(lat, lon, elev, jd, dt)
+        azimuth, zenith = _sp.sun_topo_azimuth_zenith(lat, dec, H, temp, press)
+        return azimuth,zenith,RA,dec,H
 
-    Returns an ndarray of (azimuth, zenith, RA, dec, H) where:
-    azimuth -- the observed azimuth angle of the sun measured eastward from north
-    zenith -- the observed elevation angle of the sun measured from vertical
-    RA -- topocentric right ascension
-    dec -- topocentric declination
-    H -- topocentric hour angle
+def observed_sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, delta_t=0, radians=False):
+    """Compute the observed coordinates of the sun as viewed at the given time and location.
+
+    Parameters
+    ----------
+    dt : array_like
+        UTC datetime objects or UTC timestamps (as per datetime.utcfromtimestamp) representing the times of observations
+    latitude, longitude : array_like
+        decimal degrees, positive for north of the equator and east of Greenwich
+    elevation : array_like
+        meters, relative to the WGS-84 ellipsoid
+    temperature : array_like or None, optional
+        celcius, default is 14.6 (global average in 2013)
+    pressure : array_like or None, optional
+        millibar, default is 1013 (global average in ??)
+    delta_t : array_like, optional
+        seconds, default is 0, difference between the earth's rotation time (TT) and universal time (UT)
+    radians : {True, False}, optional
+        return results in radians if True, degrees if False (default)
+
+    Returns
+    -------
+    coords : ndarray, (...,2)
+        The shape of the array is parameters broadcast together, plus a final dimension for the coordinates.
+        coords[...,0] = observed azimuth angle, measured eastward from north
+        coords[...,1] = observed zenith angle, measured down from vertical
+    """
+    if temperature is None:
+        temperature = 14.6
+    if pressure is None:
+        pressure = 1013
+    
+    #6367444 = radius of earth
+    #numpy broadcasting
+    b = np.broadcast(dt,latitude,longitude,elevation,temperature,pressure,delta_t)
+    res = np.empty(b.shape+(2,))
+    res_vec = res.reshape((-1,2))
+    for i,x in enumerate(b):
+        res_vec[i] = _sp.pos(*x)[:2]
+    if radians:
+        res = np.deg2rad(res)
+    return res
+
+def topocentric_sunpos(dt, latitude, longitude, temperature=None, pressure=None, delta_t=0, radians=False):
+    """Compute the topocentric coordinates of the sun as viewed at the given time and location.
+
+    Parameters
+    ----------
+    dt : array_like
+        UTC datetime objects or UTC timestamps (as per datetime.utcfromtimestamp) representing the times of observations
+    latitude, longitude : array_like
+        decimal degrees, positive for north of the equator and east of Greenwich
+    elevation : array_like
+        meters, relative to the WGS-84 ellipsoid
+    temperature : array_like or None, optional
+        celcius, default is 14.6 (global average in 2013)
+    pressure : array_like or None, optional
+        millibar, default is 1013 (global average in ??)
+    delta_t : array_like, optional
+        seconds, default is 0, difference between the earth's rotation time (TT) and universal time (UT)
+    radians : {True, False}, optional
+        return results in radians if True, degrees if False (default)
+
+    Returns
+    -------
+    coords : ndarray, (...,3)
+        The shape of the array is parameters broadcast together, plus a final dimension for the coordinates.
+        coords[...,0] = topocentric right ascension
+        coords[...,1] = topocentric declination
+        coords[...,2] = topocentric hour angle
+    """
+    if temperature is None:
+        temperature = 14.6
+    if pressure is None:
+        pressure = 1013
+    
+    #6367444 = radius of earth
+    #numpy broadcasting
+    b = np.broadcast(dt,latitude,longitude,elevation,temperature,pressure,delta_t)
+    res = np.empty(b.shape+(2,))
+    res_vec = res.reshape((-1,2))
+    for i,x in enumerate(b):
+        res_vec[i] = _sp.topo_pos(*x)
+    if radians:
+        res = np.deg2rad(res)
+    return res   
+
+def sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, delta_t=0, radians=False):
+    """Compute the observed and topocentric coordinates of the sun as viewed at the given time and location.
+
+    Parameters
+    ----------
+    dt : array_like
+        UTC datetime objects or UTC timestamps (as per datetime.utcfromtimestamp) representing the times of observations
+    latitude, longitude : array_like
+        decimal degrees, positive for north of the equator and east of Greenwich
+    elevation : array_like
+        meters, relative to the WGS-84 ellipsoid
+    temperature : array_like or None, optional
+        celcius, default is 14.6 (global average in 2013)
+    pressure : array_like or None, optional
+        millibar, default is 1013 (global average in ??)
+    delta_t : array_like, optional
+        seconds, default is 0, difference between the earth's rotation time (TT) and universal time (UT)
+    radians : {True, False}, optional
+        return results in radians if True, degrees if False (default)
+
+    Returns
+    -------
+    coords : ndarray, (...,5)
+        The shape of the array is parameters broadcast together, plus a final dimension for the coordinates.
+        coords[...,0] = observed azimuth angle, measured eastward from north
+        coords[...,1] = observed zenith angle, measured down from vertical
+        coords[...,2] = topocentric right ascension
+        coords[...,3] = topocentric declination
+        coords[...,4] = topocentric hour angle
     """
 
     if temperature is None:
@@ -413,18 +527,13 @@ def sun_position(dt, latitude, longitude, elevation, temperature=None, pressure=
     res = np.empty(b.shape+(5,))
     res_vec = res.reshape((-1,5))
     for i,x in enumerate(b):
-      t,lat,lon,el,tmp,pr,delt = x
-      lat,lon = _sp.norm_lat_lon(lat,lon)
-      jd = _sp.julian_day(t)
-      RA, dec, H = _sp.sun_topo_ra_decl_hour(lat, lon, el, jd, delt)
-      azimuth, zenith = _sp.sun_topo_azimuth_zenith(lat, dec, H, tmp, pr)
-      res_vec[i] = azimuth,zenith,RA,dec,H
+        res_vec[i] = _sp.pos(*x)
     if radians:
         res = np.deg2rad(res)
     return res
 
 def main(args):
-    az, zen, ra, dec, h = sun_position(args.t, args.lat, args.lon, args.elev, args.temp, args.p, args.dt, args.rad)
+    az, zen, ra, dec, h = sunpos(args.t, args.lat, args.lon, args.elev, args.temp, args.p, args.dt, args.rad)
     if args.csv:
         #machine readable
         print('{t}, {dt}, {lat}, {lon}, {elev}, {temp}, {p}, {az}, {zen}, {ra}, {dec}, {h}'.format(t=args.t, dt=args.dt, lat=args.lat, lon=args.lon, elev=args.elev,temp=args.temp, p=args.p,az=az, zen=zen, ra=ra, dec=dec, h=h))
