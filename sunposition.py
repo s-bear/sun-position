@@ -369,17 +369,17 @@ class _sp:
 
     @staticmethod
     def norm_lat_lon(lat,lon):
-      if lat < -90 or lat > 90:
-          #convert to cartesian and back
-          x = cos(deg2rad(lon))*cos(deg2rad(lat))
-          y = sin(deg2rad(lon))*cos(deg2rad(lat))
-          z = sin(deg2rad(lat))
-          r = sqrt(x**2 + y**2 + z**2)
-          lon = rad2deg(arctan2(y,x)) % 360
-          lat = rad2deg(arcsin(z/r))
-      elif lon < 0 or lon > 360:
-          lon = lon % 360
-      return lat,lon
+        if lat < -90 or lat > 90:
+            #convert to cartesian and back
+            x = cos(deg2rad(lon))*cos(deg2rad(lat))
+            y = sin(deg2rad(lon))*cos(deg2rad(lat))
+            z = sin(deg2rad(lat))
+            r = sqrt(x**2 + y**2 + z**2)
+            lon = rad2deg(arctan2(y,x)) % 360
+            lat = rad2deg(arcsin(z/r))
+        elif lon < 0 or lon > 360:
+            lon = lon % 360
+        return lat,lon
 
 def sun_position(dt, latitude, longitude, elevation, temperature=None, pressure=None, delta_t=0, radians=False):
     """Compute the coordinates of the sun as viewed at the given time and location.
@@ -403,9 +403,9 @@ def sun_position(dt, latitude, longitude, elevation, temperature=None, pressure=
     """
 
     if temperature is None:
-      temperature = 14.6
+        temperature = 14.6
     if pressure is None:
-      pressure = 1013
+        pressure = 1013
     
     #6367444 = radius of earth
     #numpy broadcasting
@@ -420,7 +420,7 @@ def sun_position(dt, latitude, longitude, elevation, temperature=None, pressure=
       azimuth, zenith = _sp.sun_topo_azimuth_zenith(lat, dec, H, tmp, pr)
       res_vec[i] = azimuth,zenith,RA,dec,H
     if radians:
-      res = np.deg2rad(res)
+        res = np.deg2rad(res)
     return res
 
 def main(args):
