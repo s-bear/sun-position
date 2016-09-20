@@ -568,9 +568,10 @@ def main(args):
 
 if __name__ == '__main__':
     from argparse import ArgumentParser
-    import datetime
+    import datetime, sys
     parser = ArgumentParser(prog='sunposition',description='Compute sun position parameters given the time and location')
     parser.add_argument('--version',action='version',version='%(prog)s 1.0')
+    parser.add_argument('--citation',dest='cite',action='store_true',help='Print citation information')
     parser.add_argument('-t,--time',dest='t',type=str,default='now',help='"now" or date and time (UTC) in "YYYY-MM-DD hh:mm:ss.ssssss" format or a (UTC) POSIX timestamp')
     parser.add_argument('-lat,--latitude',dest='lat',type=float,default=51.48,help='latitude, in decimal degrees, positive for north')
     parser.add_argument('-lon,--longitude',dest='lon',type=float,default=0.0,help='longitude, in decimal degrees, positive for east')
@@ -581,6 +582,11 @@ if __name__ == '__main__':
     parser.add_argument('-r,--radians',dest='rad',action='store_true',help='Output in radians instead of degrees')
     parser.add_argument('--csv',dest='csv',action='store_true',help='Comma separated values (time,dt,lat,lon,elev,temp,pressure,az,zen,RA,dec,H)')
     args = parser.parse_args()
+    if args.cite:
+        print("Implementation: Samuel Bear Powell, 2016")
+        print("Algorithm:")
+        print("Ibrahim Reda, Afshin Andreas, \"Solar position algorithm for solar radiation applications\", Solar Energy, Volume 76, Issue 5, 2004, Pages 577-589, ISSN 0038-092X, doi:10.1016/j.solener.2003.12.003")
+        sys.exit(0)
     if args.t == "now":
         args.t = datetime.datetime.utcnow()
     elif ":" in args.t and "-" in args.t:
