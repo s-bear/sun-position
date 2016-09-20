@@ -35,8 +35,6 @@ class _sp:
             except:
                 raise TypeError('dt must be datetime object or POSIX timestamp')
 
-
-
     @staticmethod
     def julian_day(dt):
         """Calculate the Julian Day from a datetime.datetime object in UTC"""
@@ -415,6 +413,59 @@ class _sp:
         RA, dec, H = _sp.sun_topo_ra_decl_hour(lat, lon, elev, jd, dt)
         azimuth, zenith = _sp.sun_topo_azimuth_zenith(lat, dec, H, temp, press)
         return azimuth,zenith,RA,dec,H
+
+def julian_day(dt):
+    """Convert UTC datetimes or UTC timestamps to Julian days
+
+    Parameters
+    ----------
+    dt : array_like
+        UTC datetime objects or UTC timestamps (as per datetime.utcfromtimestamp)
+
+    Returns
+    -------
+    jd : ndarray
+        datetimes converted to fractional Julian days
+    """
+    dts = np.array(dt)
+    if len(dts.shape) == 0:
+        return _sp.julian_day(dt)
+
+    jds = np.empty(dts.shape)
+    for i,d in enumerate(dts.flat):
+        jds.flat[i] = _sp.julian_day(d)
+    return jds
+
+def arcdist(p0,p1,radians=False):
+    """Angular distance between azimuth,zenith pairs
+    
+    Parameters
+    ----------
+    p0 : array_like, shape (..., 2)
+    p1 : array_like, shape (..., 2)
+        p[...,0] = azimuth angles, p[...,1] = zenith angles
+    radians : boolean (default False)
+        If False, angles are in degrees, otherwise in radians
+
+    Returns
+    -------
+    ad :  array_like, shape is broadcast(p0,p1).shape
+        Arcdistances between corresponding pairs in p0,p1
+        In degrees by default, in radians if radians=True
+    """
+    #formula comes from translating points into cartesian coordinates
+    #taking the dot product to get the cosine between the two vectors
+    #then arccos to return to angle, and simplify everything assuming real inputs
+    p0,p1 = np.array(p0), np.array(p1)
+    if not radians:
+        p0,p1 = np.deg2rad(p0), np.deg2rad(p1)
+    a0,z0 = p0[...,0], p0[...,1]
+    a1,z1 = p1[...,0], p1[...,1]
+    d = np.arccos(np.cos(z0)*np.cos(z1)+np.cos(a0-a1)*np.sin(z0)*np.sin(z1))
+    if radians:
+        return d
+    else:
+        return np.rad2deg(d)
 
 def observed_sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, delta_t=0, radians=False):
     """Compute the observed coordinates of the sun as viewed at the given time and location.
