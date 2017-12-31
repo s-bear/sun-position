@@ -474,9 +474,9 @@ def observed_sunpos(dt, latitude, longitude, elevation, temperature=None, pressu
     ----------
     dt : array_like
         UTC datetime objects or UTC timestamps (as per datetime.utcfromtimestamp) representing the times of observations
-    latitude, longitude : array_like
+    latitude, longitude : float
         decimal degrees, positive for north of the equator and east of Greenwich
-    elevation : array_like
+    elevation : float
         meters, relative to the WGS-84 ellipsoid
     temperature : array_like or None, optional
         celcius, default is 14.6 (global average in 2013)
