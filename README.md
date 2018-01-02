@@ -45,7 +45,7 @@ RA, dec, H = 65.958212307 deg, 21.6806308847 deg, 353.859123093 deg
 Example usage in code:
 ```python
 from pylab import *
-from sunposition import sun_position
+from sunposition import sunpos
 from datetime import datetime
 
 #evaluate on a 2 degree grid
@@ -54,7 +54,7 @@ lat = linspace(-90,90,91)
 LON, LAT = meshgrid(lon,lat)
 #at the current time
 now = datetime.utcnow()
-az,zen = sun_position(now,LAT,LON,0)[:2] #discard RA, dec, H
+az,zen = sunpos(now,LAT,LON,0)[:2] #discard RA, dec, H
 #convert zenith to elevation
 elev = 90 - zen
 #convert azimuth to vectors
