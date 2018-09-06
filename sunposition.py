@@ -472,19 +472,19 @@ def observed_sunpos(dt, latitude, longitude, elevation, temperature=None, pressu
 
     Parameters
     ----------
-    dt : array_like
+    dt : array_like of datetime or float
         UTC datetime objects or UTC timestamps (as per datetime.utcfromtimestamp) representing the times of observations
-    latitude, longitude : float
+    latitude, longitude : array_like of float
         decimal degrees, positive for north of the equator and east of Greenwich
-    elevation : float
+    elevation : array_like of float
         meters, relative to the WGS-84 ellipsoid
-    temperature : array_like or None, optional
+    temperature : None or array_like of float, optional
         celcius, default is 14.6 (global average in 2013)
-    pressure : array_like or None, optional
+    pressure : None or array_like of float, optional
         millibar, default is 1013 (global average in ??)
-    delta_t : array_like, optional
+    delta_t : array_like of float, optional
         seconds, default is 0, difference between the earth's rotation time (TT) and universal time (UT)
-    radians : {True, False}, optional
+    radians : bool, optional
         return results in radians if True, degrees if False (default)
 
     Returns
@@ -515,19 +515,19 @@ def topocentric_sunpos(dt, latitude, longitude, temperature=None, pressure=None,
 
     Parameters
     ----------
-    dt : array_like
+    dt : array_like of datetime or float
         UTC datetime objects or UTC timestamps (as per datetime.utcfromtimestamp) representing the times of observations
-    latitude, longitude : array_like
+    latitude, longitude : array_like of float
         decimal degrees, positive for north of the equator and east of Greenwich
-    elevation : array_like
+    elevation : array_like of float
         meters, relative to the WGS-84 ellipsoid
-    temperature : array_like or None, optional
+    temperature : None or array_like of float, optional
         celcius, default is 14.6 (global average in 2013)
-    pressure : array_like or None, optional
+    pressure : None or array_like of float, optional
         millibar, default is 1013 (global average in ??)
-    delta_t : array_like, optional
+    delta_t : array_like of float, optional
         seconds, default is 0, difference between the earth's rotation time (TT) and universal time (UT)
-    radians : {True, False}, optional
+    radians : bool, optional
         return results in radians if True, degrees if False (default)
 
     Returns
@@ -559,19 +559,19 @@ def sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, 
 
     Parameters
     ----------
-    dt : array_like
+    dt : array_like of datetime or float
         UTC datetime objects or UTC timestamps (as per datetime.utcfromtimestamp) representing the times of observations
-    latitude, longitude : array_like
+    latitude, longitude : array_like of float
         decimal degrees, positive for north of the equator and east of Greenwich
-    elevation : array_like
+    elevation : array_like of float
         meters, relative to the WGS-84 ellipsoid
-    temperature : array_like or None, optional
+    temperature : None or array_like of float, optional
         celcius, default is 14.6 (global average in 2013)
-    pressure : array_like or None, optional
+    pressure : None or array_like of float, optional
         millibar, default is 1013 (global average in ??)
-    delta_t : array_like, optional
+    delta_t : array_like of float, optional
         seconds, default is 0, difference between the earth's rotation time (TT) and universal time (UT)
-    radians : {True, False}, optional
+    radians : bool, optional
         return results in radians if True, degrees if False (default)
 
     Returns
