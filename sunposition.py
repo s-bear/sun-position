@@ -22,6 +22,7 @@
 
 import numpy as np
 from datetime import datetime
+import pytz
 
 class _sp:
     @staticmethod
@@ -616,6 +617,70 @@ def main(args):
         print("Results:")
         print("Azimuth, zenith = {az} {dr}, {zen} {dr}".format(az=az,zen=zen,dr=dr))
         print("RA, dec, H = {ra} {dr}, {dec} {dr}, {h} {dr}".format(ra=ra, dec=dec, h=h, dr=dr))
+
+class Sunpos_Localised():
+    """
+    Defines a location, and allows repeated calls to get the sun position
+    at the single location, just changing the datetime of the call.
+
+    Intended for use when repeated calls to get the current position is the 
+    preferred use.
+
+    Can be provided with a timezone (as from pytz.all_timezones) to simplify
+    the use of local system time in the calculation, however will default to
+    calculating based on UTC.
+
+    Usage:
+        Create a new Sunpos_Localised object
+        >>> import sunposition as sp
+        >>> lat = 51.5
+        >>> lon = -0.17
+        >>> height = 24
+        >>> tz = 'Europe/London'
+        >>> loc = sp.Sunpos_Localised(lat, lon, height, tz)
+        >>> from datetime import datetime
+        >>> elevation, azimuth = loc.sunpos(datetime.now())
+
+        The final call can be repeated with arbitary datetime objects whenever
+        required
+    """
+    def __init__(self, latitude, longitude, height, timezone='UTC'):
+        """
+        Initialise a new localiser instance
+        
+        Parameters:
+        -----------
+        latitude, longitude, height : Numeric values specifying locations
+        timezone : String defining timezone compatible with pytz
+        """
+        self.latitude = latitude
+        self.longitude = longitude
+        self.height = height
+        self.timezone = pytz.timezone(timezone)
+
+    def sunpos(self, datetime_inst):
+        """
+        Get position of the Sun based on location parameters initialised.
+
+        Parameters:
+        -----------
+        datetime_inst: datetime object for time of assessment
+
+        Returns:
+        -----------
+        Elevation: degrees above horizontal
+        Azimuth: defined relative to North, Clockwise           
+        """
+        local_dt = self.timezone.localize(datetime_inst, is_dst=None)
+        utc_dt = local_dt.astimezone(pytz.utc)
+
+        ra, zen = sunpos(utc_dt, 
+                        self.latitude, 
+                        self.longitude, 
+                        self.height)[:2]
+        elev = 90-zen
+
+        return elev, ra
 
 if __name__ == '__main__':
     from argparse import ArgumentParser
