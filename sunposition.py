@@ -715,7 +715,7 @@ def main(args):
 
 if __name__ == '__main__':
     from argparse import ArgumentParser
-    import datetime, sys
+    import sys
     parser = ArgumentParser(prog='sunposition',description='Compute sun position parameters given the time and location')
     parser.add_argument('--version',action='version',version='%(prog)s 1.0')
     parser.add_argument('--citation',dest='cite',action='store_true',help='Print citation information')
