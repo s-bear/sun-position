@@ -37,7 +37,7 @@ class _sp:
 
     @staticmethod
     def julian_day(dt):
-        """Calculate the Julian Day from a datetime.datetime object in UTC"""
+        """Calculate the Julian Day from a datetime object in UTC"""
         # year and month numbers
         yr, mo, dy, hr, mn, sc, us = _sp.calendar_time(dt)
         if mo <= 2:  # From paper: "if M = 1 or 2, then Y = Y - 1 and M = M + 12"
@@ -639,15 +639,15 @@ if __name__ == '__main__':
         print("Ibrahim Reda, Afshin Andreas, \"Solar position algorithm for solar radiation applications\", Solar Energy, Volume 76, Issue 5, 2004, Pages 577-589, ISSN 0038-092X, doi:10.1016/j.solener.2003.12.003")
         sys.exit(0)
     if args.t == "now":
-        args.t = datetime.datetime.utcnow()
+        args.t = datetime.utcnow()
     elif ":" in args.t and "-" in args.t:
         try:
-            args.t = datetime.datetime.strptime(args.t,'%Y-%m-%d %H:%M:%S.%f') #with microseconds
+            args.t = datetime.strptime(args.t,'%Y-%m-%d %H:%M:%S.%f') #with microseconds
         except:
             try:
-                args.t = datetime.datetime.strptime(args.t,'%Y-%m-%d %H:%M:%S.') #without microseconds
+                args.t = datetime.strptime(args.t,'%Y-%m-%d %H:%M:%S.') #without microseconds
             except:
-                args.t = datetime.datetime.strptime(args.t,'%Y-%m-%d %H:%M:%S')
+                args.t = datetime.strptime(args.t,'%Y-%m-%d %H:%M:%S')
     else:
-        args.t = datetime.datetime.utcfromtimestamp(int(args.t))
+        args.t = datetime.utcfromtimestamp(int(args.t))
     main(args)
