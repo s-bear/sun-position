@@ -510,7 +510,7 @@ def observed_sunpos(dt, latitude, longitude, elevation, temperature=None, pressu
         res = np.deg2rad(res)
     return res
 
-def topocentric_sunpos(dt, latitude, longitude, temperature=None, pressure=None, delta_t=0, radians=False):
+def topocentric_sunpos(dt, latitude, longitude, elevation, delta_t=0, radians=False):
     """Compute the topocentric coordinates of the sun as viewed at the given time and location.
 
     Parameters
@@ -521,10 +521,6 @@ def topocentric_sunpos(dt, latitude, longitude, temperature=None, pressure=None,
         decimal degrees, positive for north of the equator and east of Greenwich
     elevation : array_like of float
         meters, relative to the WGS-84 ellipsoid
-    temperature : None or array_like of float, optional
-        celcius, default is 14.6 (global average in 2013)
-    pressure : None or array_like of float, optional
-        millibar, default is 1013 (global average in ??)
     delta_t : array_like of float, optional
         seconds, default is 0, difference between the earth's rotation time (TT) and universal time (UT)
     radians : bool, optional
@@ -538,14 +534,10 @@ def topocentric_sunpos(dt, latitude, longitude, temperature=None, pressure=None,
         coords[...,1] = topocentric declination
         coords[...,2] = topocentric hour angle
     """
-    if temperature is None:
-        temperature = 14.6
-    if pressure is None:
-        pressure = 1013
     
     #6367444 = radius of earth
     #numpy broadcasting
-    b = np.broadcast(dt,latitude,longitude,elevation,temperature,pressure,delta_t)
+    b = np.broadcast(dt,latitude,longitude,elevation,delta_t)
     res = np.empty(b.shape+(2,))
     res_vec = res.reshape((-1,2))
     for i,x in enumerate(b):
