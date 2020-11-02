@@ -123,7 +123,7 @@ class _sp:
                [(1, 3.14, 0.0)]
             ]
 
-    #Earth Heliocentric Longitude coefficients (B0 and B1 in paper)
+    #Earth Heliocentric Latitude coefficients (B0 and B1 in paper)
     _EHB_ = [ #B0:
                 [(280, 3.199, 84334.662), (102, 5.422, 5507.553), (80, 3.88, 5223.69),
                 (44, 3.7, 2352.87), (32, 4.0, 1577.34)],
@@ -276,13 +276,13 @@ class _sp:
         for y, ab in zip(_sp._NLOY_, _sp._NLOab_):
             a,b = ab
             dp += (a + b*jce)*np.sin(np.dot(x, y))
-        dp = np.rad2deg(dp)/36e6
+        dp = dp/36e6
 
         de = 0.0
         for y, cd in zip(_sp._NLOY_, _sp._NLOcd_):
             c,d = cd
             de += (c + d*jce)*np.cos(np.dot(x, y))
-        de = np.rad2deg(de)/36e6
+        de = de/36e6
 
         e = _sp.ecliptic_obliquity(_sp.julian_millennium(jce), de)
 
@@ -331,7 +331,7 @@ class _sp:
 
         helio_pos = _sp.heliocentric_position(jme)
         R = helio_pos[-1]
-        phi, sigma, E = latitude, longitude, elevation
+        phi, sigma, E = np.deg2rad(latitude), np.deg2rad(longitude), elevation
         #equatorial horizontal parallax of the sun, in radians
         xi = np.deg2rad(8.794/(3600*R)) #
         #rho = distance from center of earth in units of the equatorial radius
