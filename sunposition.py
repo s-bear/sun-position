@@ -593,6 +593,110 @@ def sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, 
         res = np.deg2rad(res)
     return res
 
+def test():
+    test_file = 'test_1.txt'
+    # Parse and compare results from https://midcdmz.nrel.gov/solpos/spa.html
+    param_names = ['syear','smonth','sday','eyear','emonth','eday','otype','step','stepunit','hr','min','sec','latitude','longitude','timezone','elev','press','temp','dut1','deltat','azmrot','slope','refract']
+    param_dtype = np.dtype([(name, float) for name in param_names])
+    params = np.loadtxt(test_file, param_dtype, delimiter=',', skiprows=2, max_rows=1)
+    
+    row_type = np.dtype([
+            ('Date_M/D/YYYY', 'S10'),
+            ('Time_H:MM:SS', 'S8'),
+            ('Topo_zen', float),
+            ('Topo_az', float),
+            ('Julian_day', float),
+            ('Julian_century', float),
+            ('Julian_ephemeris_day', float),
+            ('Julian_ephemeris_century', float),
+            ('Julian_ephemeris_millennium', float),
+            ('Earth_heliocentric_longitude', float),
+            ('Earth_heliocentric_latitude', float),
+            ('Earth_radius_vector', float),
+            ('Geocentric_longitude', float),
+            ('Geocentric_latitude', float),
+            ('Mean_elongation', float),
+            ('Mean_anomaly_sun', float),
+            ('Mean_anomaly_moon', float),
+            ('Argument_latitude_moon', float),
+            ('Ascending_longitude_moon', float),
+            ('Nutation_longitude', float),
+            ('Nutation_obliquity', float),
+            ('Ecliptic_mean_obliquity', float),
+            ('Ecliptic_true_obliquity', float),
+            ('Aberration_correction', float),
+            ('Apparent_sun_longitude', float),
+            ('Greenwich_mean_sidereal_time', float),
+            ('Greenwich_sidereal_time', float),
+            ('Geocentric_sun_right_ascension', float),
+            ('Geocentric_sun_declination', float),
+            ('Observer_hour_angle', float),
+            ('Sun_equatorial_horizontal_parallax', float),
+            ('Sun_right_ascension_parallax', float),
+            ('Topo_sun_declination', float),
+            ('Topo_sun_right_ascension', float),
+            ('Topo_local_hour_angle', float),
+            ('Topo_elevation_angle_uncorrected', float),
+            ('Atmospheric_refraction_correction', float),
+            ('Topo_elevation_angle_corrected', float),
+            ('Equation_of_time', float),
+            ('Sunrise_hour_angle', float),
+            ('Sunset_hour_angle', float),
+            ('Sun_transit_altitude', float)])
+    
+    true_data = np.loadtxt(test_file, row_type, delimiter=',', skiprows=4)
+    
+    def to_datetime(date_time_pair):
+        s = str(b' '.join(date_time_pair),'UTF-8')
+        return datetime.strptime(s, '%m/%d/%Y %H:%M:%S')
+    
+    dts = [to_datetime(dt_pair) for dt_pair in true_data[['Date_M/D/YYYY','Time_H:MM:SS']]]
+    lat,lon,elev,temp,press,deltat = params['latitude'],params['longitude'],params['elev'],params['temp'],params['press'],params['deltat']
+    print('Errors')
+    print('jd, jde, jce, jme, L, B, R, delta_psi, epsilon, theta, beta, delta_tau, lambda, v, alpha, delta, alpha_prime, delta_prime, H_prime, azimuth, zenith')
+    for dt,truth in zip(dts,true_data):
+        jd = _sp.julian_day(dt) #Julian_day
+        jde = _sp.julian_ephemeris_day(jd, deltat) #Julian_ephemeris_day
+        jce = _sp.julian_century(jde) #Julian_ephemeris_century
+        jme = _sp.julian_millennium(jce) #Julian_ephemeris_millenium
+        L,B,R = _sp.heliocentric_position(jme) #Earth_heliocentric_longitude, Earth_heliocentric_latitude, Earth_radius_vector
+        delta_psi, epsilon = _sp.nutation_obliquity(jce) #Nutation_longitude, Ecliptic_true_obliquity
+        theta,beta = _sp.geocentric_position((L,B,R)) #Geocentric_longitude, Geocentric_latitude
+        delta_tau = _sp.abberation_correction(R) #Aberration_correction
+        llambda, beta = _sp.sun_longitude((L,B,R), delta_psi) #Apparent_sun_longitude, Geocentric_latitude (identical to previous)
+        v = _sp.greenwich_sidereal_time(jd, delta_psi, epsilon) #Greenwich_sidereal_time
+        alpha, delta = _sp.sun_ra_decl(llambda, epsilon, beta) #Geocentric_sun_right_ascension, Geocentric_sun_declination
+        alpha_p, delta_p, H_p = _sp.sun_topo_ra_decl_hour(lat,lon,elev,jd,deltat) #Topo_sun_right_ascension, Topo_sun_declination, Topo_local_hour_angle
+        az, zen = _sp.sun_topo_azimuth_zenith(lat,delta_p,H_p,temp,press) #Topo_az, Topo_zen
+        
+        jd_err = jd - truth['Julian_day']
+        jde_err = jde - truth['Julian_ephemeris_day']
+        jce_err = jce - truth['Julian_ephemeris_century']
+        jme_err = jme - truth['Julian_ephemeris_millennium']
+        L_err = L - truth['Earth_heliocentric_longitude']
+        B_err = B - truth['Earth_heliocentric_latitude']
+        R_err = R - truth['Earth_radius_vector']
+        delta_psi_err = delta_psi - truth['Nutation_longitude']
+        epsilon_err = epsilon - truth['Ecliptic_true_obliquity']
+        theta_err = theta - truth['Geocentric_longitude']
+        beta_err = beta - truth['Geocentric_latitude']
+        delta_tau_err = delta_tau - truth['Aberration_correction']
+        lambda_err = llambda - truth['Apparent_sun_longitude']
+        v_err = v - truth['Greenwich_sidereal_time']
+        alpha_err = alpha - truth['Geocentric_sun_right_ascension']
+        delta_err = delta - truth['Geocentric_sun_declination']
+        alpha_prime_err = alpha_p - truth['Topo_sun_right_ascension']
+        delta_prime_err = delta_p - truth['Topo_sun_declination']
+        H_prime_err = H_p - truth['Topo_local_hour_angle']
+        az_err = az - truth['Topo_az']
+        zen_err = zen - truth['Topo_zen']
+        all_errs = [jd_err,jde_err,jce_err,jme_err,L_err,B_err,R_err,delta_psi_err,
+                    epsilon_err,theta_err,beta_err,delta_tau_err,lambda_err,
+                    v_err,alpha_err,delta_err,alpha_prime_err,delta_prime_err,
+                    H_prime_err,az_err,zen_err]
+        print(','.join('{}'.format(err) for err in all_errs))
+    
+
 def main(args):
     az, zen, ra, dec, h = sunpos(args.t, args.lat, args.lon, args.elev, args.temp, args.p, args.dt, args.rad)
     if args.csv:
