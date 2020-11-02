@@ -276,13 +276,13 @@ class _sp:
         for y, ab in zip(_sp._NLOY_, _sp._NLOab_):
             a,b = ab
             dp += (a + b*jce)*np.sin(np.dot(x, y))
-        dp = np.rad2deg(dp)/36e6
+        dp = dp/36e6
 
         de = 0.0
         for y, cd in zip(_sp._NLOY_, _sp._NLOcd_):
             c,d = cd
             de += (c + d*jce)*np.cos(np.dot(x, y))
-        de = np.rad2deg(de)/36e6
+        de = de/36e6
 
         e = _sp.ecliptic_obliquity(_sp.julian_millennium(jce), de)
 
@@ -331,7 +331,7 @@ class _sp:
 
         helio_pos = _sp.heliocentric_position(jme)
         R = helio_pos[-1]
-        phi, sigma, E = latitude, longitude, elevation
+        phi, E = np.deg2rad(latitude), elevation
         #equatorial horizontal parallax of the sun, in radians
         xi = np.deg2rad(8.794/(3600*R)) #
         #rho = distance from center of earth in units of the equatorial radius
@@ -352,7 +352,7 @@ class _sp:
         v = _sp.greenwich_sidereal_time(jd, delta_psi, epsilon) #
 
         H = v + longitude - alpha #
-        Hr, dr = map(np.deg2rad,(H,delta))
+        Hr, dr = np.deg2rad((H,delta))
 
         dar = np.arctan2(-x*np.sin(xi)*np.sin(Hr), np.cos(dr)-x*np.sin(xi)*np.cos(Hr))
         delta_alpha = np.rad2deg(dar) #
@@ -371,7 +371,7 @@ class _sp:
         pressure = average pressure in mBar (default 1013 = global average)
         """
         phi = np.deg2rad(latitude)
-        dr, Hr = map(np.deg2rad,(delta_prime, H_prime))
+        dr, Hr = np.deg2rad((delta_prime, H_prime))
         P, T = pressure, temperature
         e0 = np.rad2deg(np.arcsin(np.sin(phi)*np.sin(dr) + np.cos(phi)*np.cos(dr)*np.cos(Hr)))
         tmp = np.deg2rad(e0 + 10.3/(e0+5.11))
