@@ -123,7 +123,7 @@ class _sp:
                [(1, 3.14, 0.0)]
             ]
 
-    #Earth Heliocentric Longitude coefficients (B0 and B1 in paper)
+    #Earth Heliocentric Latitude coefficients (B0 and B1 in paper)
     _EHB_ = [ #B0:
                 [(280, 3.199, 84334.662), (102, 5.422, 5507.553), (80, 3.88, 5223.69),
                 (44, 3.7, 2352.87), (32, 4.0, 1577.34)],
@@ -295,10 +295,10 @@ class _sp:
     
     @staticmethod
     def sun_longitude(helio_pos, delta_psi):
-        """Calculate the apparent sun longitude (lambda, in degrees) and geocentric longitude (beta, in degrees) given the earth heliocentric position and delta_psi"""
+        """Calculate the apparent sun longitude (lambda, in degrees) and geocentric latitude (beta, in degrees) given the earth heliocentric position and delta_psi"""
         L,B,R = helio_pos
-        theta = L + 180 #geocentric latitude
-        beta = -B
+        theta = L + 180 #geocentric longitude
+        beta = -B #geocentric latitude
         ll = theta + delta_psi + _sp.abberation_correction(R)
         return ll, beta
     
