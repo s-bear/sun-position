@@ -6,45 +6,52 @@ In this code, the latitude and longitude are positive for North and East, respec
 
 Example usage on the command line:
 ```
-$ sunposition.py --help
-usage: sunposition.py [-h] [-t,--time T] [-lat,--latitude LAT]
-                      [-lon,--longitude LON] [-e,--elevation ELEV]
-                      [-T,--temperature TEMP] [-p,--pressure P] [-dt DT]
+$ usage: sunposition [-h] [--test] [--version] [--citation] [-t,--time T] [-lat,--latitude LAT] [-lon,--longitude LON]
+                   [-e,--elevation ELEV] [-T,--temperature TEMP] [-p,--pressure P] [-a,--atmos_refract A] [-dt DT]
+                   [-r,--radians] [--csv] [--jit]
 
 Compute sun position parameters given the time and location
 
 optional arguments:
   -h, --help            show this help message and exit
-  -t,--time T           "now" or date and time (UTC) in "YYYY-MM-DD
-                        hh:mm:ss.ssssss" format or a (UTC) POSIX timestamp
+  --test                Run tests
+  --version             show program's version number and exit
+  --citation            Print citation information
+  -t,--time T           "now" or date and time (UTC) in "YYYY-MM-DD hh:mm:ss.ssssss" format or a (UTC) POSIX timestamp
   -lat,--latitude LAT   latitude, in decimal degrees, positive for north
   -lon,--longitude LON  longitude, in decimal degrees, positive for east
   -e,--elevation ELEV   elevation, in meters
   -T,--temperature TEMP
                         temperature, in degrees celcius
   -p,--pressure P       atmospheric pressure, in millibar
-  -dt DT                difference between earth's rotation time (TT) and
-                        universal time (UT1)
+  -a,--atmos_refract A  atmospheric refraction at sunrise and sunset, in degrees
+  -dt DT                difference between earth's rotation time (TT) and universal time (UT1)
+  -r,--radians          Output in radians instead of degrees
+  --csv                 Comma separated values (time,dt,lat,lon,elev,temp,pressure,az,zen,RA,dec,H)
+  --jit                 Enable Numba acceleration (jit compilation time may overwhelm speed-up)
+
 $ sunposition.py
-Computing sun position at T = 2015-04-02 04:58:00.185177 + 0.0 s
-Lat, Long, Elev = 51.48 deg, 0.0 deg, 0 m
+Computing sun position at T = 2021-05-21 06:47:44.644873 + 0.0 s
+Lat, Lon, Elev = 51.48 deg, 0.0 deg, 0 m
 T, P = 14.6 C, 1013.0 mbar
 Results:
-Azimuth, zenith = 74.0758398512 deg, 96.4040169751 deg
-RA, dec, H = 11.2148787985 deg, 4.78553367225 deg, 253.554142824 deg
+Azimuth, zenith = 86.68229367131721 deg, 66.38510410296101 deg
+RA, dec, H = 58.28648711185745 deg, 20.241411055526044 deg, 282.7836435018984 deg
 
 $ sunposition.py -t "1953-05-29 05:45:00" -lat 27.9881 -lon 86.9253 -e 8848
 Computing sun position at T = 1953-05-29 05:45:00 + 0.0 s
-Lat, Long, Elev = 27.9881 deg, 86.9253 deg, 8848.0 m
+Lat, Lon, Elev = 27.9881 deg, 86.9253 deg, 8848.0 m
 T, P = 14.6 C, 1013.0 mbar
 Results:
-Azimuth, zenith = 137.203450764 deg, 8.41097958239
-RA, dec, H = 65.958212307 deg, 21.6806308847 deg, 353.859123093 deg
+Azimuth, zenith = 137.73675146015 deg, 8.481271417778686 deg
+RA, dec, H = 65.7605040841157 deg, 21.576417030912577 deg, 353.8751689030205 deg
 ```
 
 Example usage in code:
 ```python
 from pylab import *
+#set environment variable NUMBA_DISABLE_JIT = 1 before importing sunposition to disable jit if it negatively impacts performance
+# e.g. import os; os.environ['NUMBA_DISABLE_JIT'] = 1
 from sunposition import sunpos
 from datetime import datetime
 
