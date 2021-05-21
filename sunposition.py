@@ -24,6 +24,9 @@ import numpy as np
 from datetime import datetime
 
 class _sp:
+    
+    _SUN_RADIUS = 0.26667
+
     @staticmethod
     def calendar_time(dt):
         try:
@@ -364,7 +367,7 @@ class _sp:
         return alpha_prime, delta_prime, H_prime
     
     @staticmethod
-    def sun_topo_azimuth_zenith(latitude, delta_prime, H_prime, temperature=14.6, pressure=1013):
+    def sun_topo_azimuth_zenith(latitude, delta_prime, H_prime, temperature=14.6, pressure=1013, atmos_refract=0.5667):
         """Compute the sun's topocentric azimuth and zenith angles
         azimuth is measured eastward from north, zenith from vertical
         temperature = average temperature in C (default is 14.6 = global average in 2013)
@@ -374,14 +377,17 @@ class _sp:
         dr, Hr = np.deg2rad((delta_prime, H_prime))
         P, T = pressure, temperature
         e0 = np.rad2deg(np.arcsin(np.sin(phi)*np.sin(dr) + np.cos(phi)*np.cos(dr)*np.cos(Hr)))
-        tmp = np.deg2rad(e0 + 10.3/(e0+5.11))
-        delta_e = (P/1010.0)*(283.0/(273+T))*(1.02/(60*np.tan(tmp)))
+        delta_e = 0.0
+        if e0 >= -1*(_sp._SUN_RADIUS + atmos_refract):
+            tmp = np.deg2rad(e0 + 10.3/(e0+5.11))
+            delta_e = (P/1010.0)*(283.0/(273+T))*(1.02/(60*np.tan(tmp)))
+
         e = e0 + delta_e
         zenith = 90 - e
 
         gamma = np.rad2deg(np.arctan2(np.sin(Hr), np.cos(Hr)*np.sin(phi) - np.tan(dr)*np.cos(phi))) % 360
         Phi = (gamma + 180) % 360 #azimuth from north
-        return Phi, zenith
+        return Phi, zenith, delta_e
 
     @staticmethod
     def norm_lat_lon(lat,lon):
@@ -406,12 +412,12 @@ class _sp:
         return RA, dec, H
 
     @staticmethod
-    def pos(t,lat,lon,elev,temp,press,dt):
+    def pos(t,lat,lon,elev,temp,press,atmos_refract,dt):
         """Compute azimute,zenith,RA,dec,H all in degrees"""
         lat,lon = _sp.norm_lat_lon(lat,lon)
         jd = _sp.julian_day(t)
         RA, dec, H = _sp.sun_topo_ra_decl_hour(lat, lon, elev, jd, dt)
-        azimuth, zenith = _sp.sun_topo_azimuth_zenith(lat, dec, H, temp, press)
+        azimuth, zenith, delta_e = _sp.sun_topo_azimuth_zenith(lat, dec, H, temp, press, atmos_refract)
         return azimuth,zenith,RA,dec,H
 
 def julian_day(dt):
@@ -467,7 +473,7 @@ def arcdist(p0,p1,radians=False):
     else:
         return np.rad2deg(d)
 
-def observed_sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, delta_t=0, radians=False):
+def observed_sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, atmos_refract=None, delta_t=0, radians=False):
     """Compute the observed coordinates of the sun as viewed at the given time and location.
 
     Parameters
@@ -498,10 +504,11 @@ def observed_sunpos(dt, latitude, longitude, elevation, temperature=None, pressu
         temperature = 14.6
     if pressure is None:
         pressure = 1013
-    
+    if atmos_refract is None:
+        atmos_refract = 0.5667
     #6367444 = radius of earth
     #numpy broadcasting
-    b = np.broadcast(dt,latitude,longitude,elevation,temperature,pressure,delta_t)
+    b = np.broadcast(dt,latitude,longitude,elevation,temperature,pressure,atmos_refract,delta_t)
     res = np.empty(b.shape+(2,))
     res_vec = res.reshape((-1,2))
     for i,x in enumerate(b):
@@ -546,7 +553,7 @@ def topocentric_sunpos(dt, latitude, longitude, elevation, delta_t=0, radians=Fa
         res = np.deg2rad(res)
     return res   
 
-def sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, delta_t=0, radians=False):
+def sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, atmos_refract=None, delta_t=0, radians=False):
     """Compute the observed and topocentric coordinates of the sun as viewed at the given time and location.
 
     Parameters
@@ -581,10 +588,12 @@ def sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, 
         temperature = 14.6
     if pressure is None:
         pressure = 1013
+    if atmos_refract is None:
+        atmos_refract = 0.5667
     
     #6367444 = radius of earth
     #numpy broadcasting
-    b = np.broadcast(dt,latitude,longitude,elevation,temperature,pressure,delta_t)
+    b = np.broadcast(dt,latitude,longitude,elevation,temperature,pressure,atmos_refract,delta_t)
     res = np.empty(b.shape+(5,))
     res_vec = res.reshape((-1,5))
     for i,x in enumerate(b):
@@ -649,11 +658,15 @@ def test():
     def to_datetime(date_time_pair):
         s = str(b' '.join(date_time_pair),'UTF-8')
         return datetime.strptime(s, '%m/%d/%Y %H:%M:%S')
+
+    def angle_diff(a1, a2, period=2*np.pi):
+        """(a1 - a2 + d) % (2*d) - d; d = period/2"""
+        d = period/2
+        return ((a1 - a2 + d) % (period)) - d
     
     dts = [to_datetime(dt_pair) for dt_pair in true_data[['Date_M/D/YYYY','Time_H:MM:SS']]]
     lat,lon,elev,temp,press,deltat = params['latitude'],params['longitude'],params['elev'],params['temp'],params['press'],params['deltat']
-    print('Errors')
-    print('jd, jde, jce, jme, L, B, R, delta_psi, epsilon, theta, beta, delta_tau, lambda, v, alpha, delta, alpha_prime, delta_prime, H_prime, azimuth, zenith')
+    all_errs = []
     for dt,truth in zip(dts,true_data):
         jd = _sp.julian_day(dt) #Julian_day
         jde = _sp.julian_ephemeris_day(jd, deltat) #Julian_ephemeris_day
@@ -667,7 +680,7 @@ def test():
         v = _sp.greenwich_sidereal_time(jd, delta_psi, epsilon) #Greenwich_sidereal_time
         alpha, delta = _sp.sun_ra_decl(llambda, epsilon, beta) #Geocentric_sun_right_ascension, Geocentric_sun_declination
         alpha_p, delta_p, H_p = _sp.sun_topo_ra_decl_hour(lat,lon,elev,jd,deltat) #Topo_sun_right_ascension, Topo_sun_declination, Topo_local_hour_angle
-        az, zen = _sp.sun_topo_azimuth_zenith(lat,delta_p,H_p,temp,press) #Topo_az, Topo_zen
+        az, zen, delta_e = _sp.sun_topo_azimuth_zenith(lat,delta_p,H_p,temp,press) #Topo_az, Topo_zen, Atmospheric_refraction_correction
         
         jd_err = jd - truth['Julian_day']
         jde_err = jde - truth['Julian_ephemeris_day']
@@ -687,15 +700,19 @@ def test():
         delta_err = delta - truth['Geocentric_sun_declination']
         alpha_prime_err = alpha_p - truth['Topo_sun_right_ascension']
         delta_prime_err = delta_p - truth['Topo_sun_declination']
-        H_prime_err = H_p - truth['Topo_local_hour_angle']
-        az_err = az - truth['Topo_az']
+        H_prime_err = angle_diff(H_p, truth['Topo_local_hour_angle'], 360)
+        az_err = angle_diff(az, truth['Topo_az'], 360)
+        delta_e_err = delta_e - truth['Atmospheric_refraction_correction']
         zen_err = zen - truth['Topo_zen']
-        all_errs = [jd_err,jde_err,jce_err,jme_err,L_err,B_err,R_err,delta_psi_err,
+        all_errs.append([jd_err,jde_err,jce_err,jme_err,L_err,B_err,R_err,delta_psi_err,
                     epsilon_err,theta_err,beta_err,delta_tau_err,lambda_err,
                     v_err,alpha_err,delta_err,alpha_prime_err,delta_prime_err,
-                    H_prime_err,az_err,zen_err]
-        print(','.join('{}'.format(err) for err in all_errs))
-    
+                    H_prime_err,az_err,delta_e_err, zen_err])
+    rms_err = np.sqrt(np.mean(np.array(all_errs)**2,0))
+    err_names = ['Julian day', 'Julian ephemeris day', 'Julian ephemeris century', 'Julian ephemeris millennium', 'Earth heliocentric longitude', 'Earth heliocentric latitude', 'Earth radius vector', 'Nutation longitude', 'Ecliptic true obliquity', 'Geocentric longitude', 'Geocentric latitude', 'Aberration correction', 'Apparent sun longitude', 'Greenwich sidereal time', 'Geocentric sun right ascension', 'Geocentric sun declination', 'Topo sun right ascension', 'Topo sun declination', 'Topo local hour angle', 'Topo az', 'Atmospheric_refraction_correction','Topo zen']
+    print('RMS Errors')
+    for n, e in zip(err_names, rms_err):
+        print('{}: {}'.format(n, e))
 
 def main(args):
     az, zen, ra, dec, h = sunpos(args.t, args.lat, args.lon, args.elev, args.temp, args.p, args.dt, args.rad)
@@ -717,6 +734,7 @@ if __name__ == '__main__':
     from argparse import ArgumentParser
     import sys
     parser = ArgumentParser(prog='sunposition',description='Compute sun position parameters given the time and location')
+    parser.add_argument('--test',dest='test',action='store_true',help='Run tests')
     parser.add_argument('--version',action='version',version='%(prog)s 1.0')
     parser.add_argument('--citation',dest='cite',action='store_true',help='Print citation information')
     parser.add_argument('-t,--time',dest='t',type=str,default='now',help='"now" or date and time (UTC) in "YYYY-MM-DD hh:mm:ss.ssssss" format or a (UTC) POSIX timestamp')
@@ -725,6 +743,7 @@ if __name__ == '__main__':
     parser.add_argument('-e,--elevation',dest='elev',type=float,default=0,help='elevation, in meters')
     parser.add_argument('-T,--temperature',dest='temp',type=float,default=14.6,help='temperature, in degrees celcius')
     parser.add_argument('-p,--pressure',dest='p',type=float,default=1013.0,help='atmospheric pressure, in millibar')
+    parser.add_argument('-a,--atmos_refract',dest='a',type=float,default=0.5667,help='atmospheric refraction at sunrise and sunset, in degrees')
     parser.add_argument('-dt',type=float,default=0.0,help='difference between earth\'s rotation time (TT) and universal time (UT1)')
     parser.add_argument('-r,--radians',dest='rad',action='store_true',help='Output in radians instead of degrees')
     parser.add_argument('--csv',dest='csv',action='store_true',help='Comma separated values (time,dt,lat,lon,elev,temp,pressure,az,zen,RA,dec,H)')
@@ -746,4 +765,7 @@ if __name__ == '__main__':
                 args.t = datetime.strptime(args.t,'%Y-%m-%d %H:%M:%S')
     else:
         args.t = datetime.utcfromtimestamp(int(args.t))
-    main(args)
+    if args.test:
+        test()
+    else:
+        main(args)
