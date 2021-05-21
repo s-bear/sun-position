@@ -51,8 +51,7 @@ if __name__ == '__main__':
         print("Ibrahim Reda, Afshin Andreas, \"Solar position algorithm for solar radiation applications\", Solar Energy, Volume 76, Issue 5, 2004, Pages 577-589, ISSN 0038-092X, doi:10.1016/j.solener.2003.12.003")
         sys.exit(0)
     
-    if args.jit:
-        _JIT = True
+    _JIT = args.jit
     
     if args.t == "now":
         args.t = datetime.utcnow()
