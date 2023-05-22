@@ -1,5 +1,7 @@
 # sunposition
 
+See https://pypi.org/project/sunposition/1.1/ to install via pip.
+
 Python module for computing sun position based on the algorithms from "Solar position algorithm for solar radiation applications" by Ibrahim Reda and Afshin Anreas, Solar Energy (2004).
 The algorithm calculates "the solar zenith and azimuth angles in the period from the year −2000 to 6000, with uncertainties of ±0.0003°".
 See http://dx.doi.org/10.1016/j.solener.2003.12.003 for more information.
