@@ -834,7 +834,16 @@ def julian_day(dt):
     t = _calendar_time(dt)
     return _julian_day(t)
 
-@jit
+@jit(nopython=True)
+def _arcdist(p0,p1):
+    a0,z0 = p0[...,0], p0[...,1]
+    a1,z1 = p1[...,0], p1[...,1]
+    return np.arccos(np.cos(z0)*np.cos(z1)+np.cos(a0-a1)*np.sin(z0)*np.sin(z1))
+
+@jit(nopython=True)
+def _arcdist_deg(p0,p1):
+    return np.rad2deg(_arcdist(np.deg2rad(p0),np.deg2rad(p1)))
+
 def arcdist(p0,p1,radians=False):
     """Angular distance between azimuth,zenith pairs
     
@@ -855,16 +864,11 @@ def arcdist(p0,p1,radians=False):
     #formula comes from translating points into cartesian coordinates
     #taking the dot product to get the cosine between the two vectors
     #then arccos to return to angle, and simplify everything assuming real inputs
-    p0,p1 = np.asarray(p0), np.asarray(p1)
-    if not radians:
-        p0,p1 = np.deg2rad(p0), np.deg2rad(p1)
-    a0,z0 = p0[...,0], p0[...,1]
-    a1,z1 = p1[...,0], p1[...,1]
-    d = np.arccos(np.cos(z0)*np.cos(z1)+np.cos(a0-a1)*np.sin(z0)*np.sin(z1))
+    p0,p1 = np.broadcast_arrays(p0, p1)
     if radians:
-        return d
+        return _arcdist(p0,p1)
     else:
-        return np.rad2deg(d)
+        return _arcdist_deg(p0,p1)
 
 
 if __name__ == '__main__':
