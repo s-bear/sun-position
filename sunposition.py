@@ -111,8 +111,8 @@ def main(args=None, **kw):
         args.time = datetime.utcfromtimestamp(int(args.time))
 
     #NB: jit is a defer_decorator, defined below
-    if args.jit:
-        jit.apply()
+    if args.jit and not jit.apply():
+        print('WARNING: JIT unavailable (requires numba and scipy)',file=sys.stderr)
 
     if args.test:
         return test(args)
@@ -370,7 +370,7 @@ class defer_decorator:
     
     def apply(self):
         if self.decorator is None:
-            return
+            return False
         new_funcs = {}
         for f, args, kw in self.funcs:
             if args is None:
@@ -378,15 +378,16 @@ class defer_decorator:
             else:
                 new_funcs[f.__name__] = self.decorator(*args,**kw)(f)
         globals().update(new_funcs)
+        return True
 
 try:
-    import numba
-    if (numba.config.DISABLE_JIT == 0) and not os.environ.get('NUMBA_DISABLE_JIT',False):
-        jit = defer_decorator(numba.jit)
-    else:
-        jit = defer_decorator(None)
+    #scipy is required for numba's linear algebra
+    import numba, scipy
+    jit = defer_decorator(numba.jit)
+    _ENABLE_JIT = (numba.config.DISABLE_JIT == 0) and not os.environ.get('NUMBA_DISABLE_JIT',False)
 except:
     jit = defer_decorator(None)
+    _ENABLE_JIT = False
 
 
 #define the polval that we will use if jit is enabled
@@ -868,3 +869,6 @@ def arcdist(p0,p1,radians=False):
 
 if __name__ == '__main__':
     sys.exit(main())
+
+if _ENABLE_JIT:
+    jit.apply()
