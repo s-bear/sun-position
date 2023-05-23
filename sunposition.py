@@ -24,7 +24,7 @@ import os, sys, argparse
 import numpy as np
 from datetime import datetime
 
-VERSION = '1.1'
+VERSION = '1.1.1'
 
 def parse_args(args=None, **kw):
     """Parse arguments for sunposition.py. See main()"""
@@ -135,6 +135,32 @@ def main(args=None, **kw):
         print(f"RA, dec, H = {ra} {dr}, {dec} {dr}, {h} {dr}")\
 
     return 0
+
+def arcdist(p0,p1,radians=False):
+    """Angular distance between azimuth,zenith pairs
+    
+    Parameters
+    ----------
+    p0 : array_like, shape (..., 2)
+    p1 : array_like, shape (..., 2)
+        p[...,0] = azimuth angles, p[...,1] = zenith angles
+    radians : boolean (default False)
+        If False, angles are in degrees, otherwise in radians
+
+    Returns
+    -------
+    ad :  array_like, shape is broadcast(p0,p1).shape
+        Arcdistances between corresponding pairs in p0,p1
+        In degrees by default, in radians if radians=True
+    """
+    #formula comes from translating points into cartesian coordinates
+    #taking the dot product to get the cosine between the two vectors
+    #then arccos to return to angle, and simplify everything assuming real inputs
+    p0,p1 = np.broadcast_arrays(p0, p1)
+    if radians:
+        return _arcdist(p0,p1)
+    else:
+        return _arcdist_deg(p0,p1)
 
 def topocentric_sunpos(dt, latitude, longitude, elevation, delta_t=0, radians=False):
     """Compute the topocentric coordinates of the sun as viewed at the given time and location.
@@ -844,31 +870,7 @@ def _arcdist(p0,p1):
 def _arcdist_deg(p0,p1):
     return np.rad2deg(_arcdist(np.deg2rad(p0),np.deg2rad(p1)))
 
-def arcdist(p0,p1,radians=False):
-    """Angular distance between azimuth,zenith pairs
-    
-    Parameters
-    ----------
-    p0 : array_like, shape (..., 2)
-    p1 : array_like, shape (..., 2)
-        p[...,0] = azimuth angles, p[...,1] = zenith angles
-    radians : boolean (default False)
-        If False, angles are in degrees, otherwise in radians
 
-    Returns
-    -------
-    ad :  array_like, shape is broadcast(p0,p1).shape
-        Arcdistances between corresponding pairs in p0,p1
-        In degrees by default, in radians if radians=True
-    """
-    #formula comes from translating points into cartesian coordinates
-    #taking the dot product to get the cosine between the two vectors
-    #then arccos to return to angle, and simplify everything assuming real inputs
-    p0,p1 = np.broadcast_arrays(p0, p1)
-    if radians:
-        return _arcdist(p0,p1)
-    else:
-        return _arcdist_deg(p0,p1)
 
 
 if __name__ == '__main__':
