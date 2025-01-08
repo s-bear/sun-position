@@ -149,8 +149,8 @@ def main(args=None, **kwargs):
         print(f"Lat, Lon, Elev = {lat} deg, {lon} deg, {elev} m")
         print(f"T, P = {temp} C, {p} mbar")
         print("Results:")
-        print(f"Azimuth, zenith = {az} {dr}, {zen} {dr}")
-        print(f"RA, dec, H = {ra} {dr}, {dec} {dr}, {h} {dr}")\
+        print(f"Azimuth, zenith = {az:0.4f} {dr}, {zen:0.4f} {dr}")
+        print(f"RA, dec, H = {ra:0.4f} {dr}, {dec:0.4f} {dr}, {h:0.4f} {dr}")\
 
     return 0
 
