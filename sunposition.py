@@ -20,45 +20,72 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import os, sys, argparse
+import os, sys, argparse, re, functools
 import numpy as np
 import time,datetime
-import re
 
-VERSION = '1.1.1'
+try:
+    #scipy is required for numba's linear algebra routines to work
+    import numba, scipy
+    _ENABLE_JIT = True
+except:
+    numba = None
+    _ENABLE_JIT = False
 
-def parse_args(args=None, **kw):
-    """Parse arguments for sunposition.py. See main()"""
-    parser = argparse.ArgumentParser(prog='sunposition',description='Compute sun position parameters given the time and location')
-    parser.add_argument('--test',help='Test against output from https://midcdmz.nrel.gov/solpos/spa.html')
-    parser.add_argument('--version',action='version',version='%(prog)s 1.1')
-    parser.add_argument('--citation',action='store_true',help='Print citation information')
-    parser.add_argument('-t','--time',type=str,default='now',help='"now" or date and time (UTC) in "YYYY-MM-DD hh:mm:ss.ssssss" format or a (UTC) POSIX timestamp')
-    parser.add_argument('-lat','--latitude',type=float,default=51.48,help='observer latitude, in decimal degrees, positive for north')
-    parser.add_argument('-lon','--longitude',type=float,default=0.0,help='observer longitude, in decimal degrees, positive for east')
-    parser.add_argument('-e','--elevation',type=float,default=0,help='observer elevation, in meters')
-    parser.add_argument('-T','--temperature',type=float,default=14.6,help='temperature, in degrees celcius')
-    parser.add_argument('-p','--pressure',type=float,default=1013.0,help='atmospheric pressure, in millibar')
-    parser.add_argument('-a','--atmos_refract',type=float,default=0.5667,help='atmospheric refraction at sunrise and sunset, in degrees')
-    parser.add_argument('-dt',type=float,default=0.0,help='difference between earth\'s rotation time (TT) and universal time (UT1)')
-    parser.add_argument('-r','--radians',action='store_true',help='Output in radians instead of degrees')
-    parser.add_argument('--csv',action='store_true',help='Comma separated values (time,dt,lat,lon,elev,temp,pressure,az,zen,RA,dec,H)')
-    parser.add_argument('--jit',action='store_true',help='Enable Numba acceleration (jit compilation time may overwhelm speed-up)')
-    return parser.parse_args(args, argparse.Namespace(**kw))
+VERSION = '1.2.0'
 
-def main(args=None, **kw):
+_arg_parser = argparse.ArgumentParser(prog='sunposition',description='Compute sun position parameters given the time and location')
+_arg_parser.add_argument('--test',help='Test against output from https://midcdmz.nrel.gov/solpos/spa.html')
+_arg_parser.add_argument('--version',action='version',version=f'%(prog)s {VERSION}')
+_arg_parser.add_argument('--citation',action='store_true',help='Print citation information')
+_arg_parser.add_argument('-t','--time',type=str,default='now',help='"now" or date and time (UTC) in "YYYY-MM-DD hh:mm:ss.ssssss" format or a (UTC) POSIX timestamp')
+_arg_parser.add_argument('-lat','--latitude',type=float,default=51.48,help='observer latitude, in decimal degrees, positive for north')
+_arg_parser.add_argument('-lon','--longitude',type=float,default=0.0,help='observer longitude, in decimal degrees, positive for east')
+_arg_parser.add_argument('-e','--elevation',type=float,default=0,help='observer elevation, in meters')
+_arg_parser.add_argument('-T','--temperature',type=float,default=14.6,help='temperature, in degrees celcius')
+_arg_parser.add_argument('-p','--pressure',type=float,default=1013.0,help='atmospheric pressure, in millibar')
+_arg_parser.add_argument('-a','--atmos_refract',type=float,default=0.5667,help='atmospheric refraction at sunrise and sunset, in degrees')
+_arg_parser.add_argument('-dt',type=float,default=0.0,help='difference between earth\'s rotation time (TT) and universal time (UT1)')
+_arg_parser.add_argument('-r','--radians',action='store_true',help='Output in radians instead of degrees')
+_arg_parser.add_argument('--csv',action='store_true',help='Comma separated values (time,dt,lat,lon,elev,temp,pressure,az,zen,RA,dec,H)')
+_arg_parser.add_argument('--no-jit',action='store_false',dest='jit',default=None,help='Disable Numba acceleration (default, if Numba is not available)')
+_arg_parser.add_argument('--jit',action='store_true',default=None,help='Enable Numba acceleration (default, if Numba is available)')
+
+
+if __name__ == '__main__':
+    #parse args here, so we can disable jit before defining all of the functions
+    _args = _arg_parser.parse_args()
+    if _args.jit is not None:
+        _ENABLE_JIT = _args.jit
+    elif numba.config.DISABLE_JIT or os.environ.get('NUMBA_DISABLE_JIT',False):
+        _ENABLE_JIT = False
+
+def empty_decorator(f = None, *args, **kw):
+    if callable(f):
+        return f
+    return empty_decorator
+
+if _ENABLE_JIT and numba is not None:
+    njit = functools.partial(numba.njit,cache=True)
+    vectorize = functools.partial(numba.vectorize,cache=True)
+else:
+    njit = empty_decorator
+    vectorize = np.vectorize
+
+def main(args=None, **kwargs):
     """Run sunposition command-line tool.
 
-    If run without arguments, parses sys.argv, otherwise
-    arguments may be specified by a list of strings to be parsed, e.g.,
+    If run without arguments, uses sys.argv, otherwise arguments may be
+    specified by a list of strings to be parsed, e.g.:
         main(['--time','now'])
     or as keyword arguments:
         main(time='now')
+    or as an argparse.Namespace object (as produced by argparse.ArgumentParser)
 
     Parameters
     ----------
-    args : list of str, optional
-        Command-line arguments to parse. sys.argv is not parsed if provided
+    args : list of str or argparse.Namespace, optional
+        Command-line arguments. sys.argv is used if not provided.
     test : path to test file
         Run for the test case in the test file and compare results.
     version : bool
@@ -85,28 +112,30 @@ def main(args=None, **kw):
         If True, output in radians instead of degrees
     csv : bool
         If True, output as comma separated values (time, dt, lat, lon, elev, temp, pressure, az, zen, RA, dec, H)
-    jit : bool
-        If True, enable Numba acceleration (jit compilation time may overwhelm speed-up and slow down the total run-time!)
     """
-    args = parse_args(args, **kw)
-
+    if args is None:
+        args = _args
+    elif isinstance(args,(list,tuple)):
+        args = _arg_parser.parse_args(args)
+    
+    for kw in kwargs:
+        setattr(args,kw,kwargs[kw])
+    
     if args.citation:
         print("Algorithm:")
         print("  Ibrahim Reda, Afshin Andreas, \"Solar position algorithm for solar radiation applications\",")
         print("  Solar Energy, Volume 76, Issue 5, 2004, Pages 577-589, ISSN 0038-092X,")
         print("  doi:10.1016/j.solener.2003.12.003")
-        print("Implemented by Samuel Powell, 2016-2023, https://github.com/s-bear/sun-position")
+        print("Implemented by Samuel Powell, 2016-2025, https://github.com/s-bear/sun-position")
         return 0
 
     args.time = _string_to_posix_time(args.time)
 
-    #NB: jit is a defer_decorator, defined below
-    if args.jit and not njit.apply():
+    if _ENABLE_JIT and numba is None:
         print('WARNING: JIT unavailable (requires numba and scipy)',file=sys.stderr)
 
     if args.test:
         return test(args)
-
 
     t, lat, lon, elev = args.time, args.latitude, args.longitude, args.elevation
     temp, p, dt, rad = args.temperature, args.pressure, args.dt, args.radians
@@ -125,6 +154,16 @@ def main(args=None, **kw):
         print(f"RA, dec, H = {ra} {dr}, {dec} {dr}, {h} {dr}")\
 
     return 0
+
+@njit
+def _arcdist(p0,p1):
+    a0,z0 = p0[...,0], p0[...,1]
+    a1,z1 = p1[...,0], p1[...,1]
+    return np.arccos(np.cos(z0)*np.cos(z1)+np.cos(a0-a1)*np.sin(z0)*np.sin(z1))
+
+@njit
+def _arcdist_deg(p0,p1):
+    return np.rad2deg(_arcdist(np.deg2rad(p0),np.deg2rad(p1)))
 
 def arcdist(p0,p1,radians=False):
     """Angular distance between azimuth,zenith pairs
@@ -176,7 +215,7 @@ def topocentric_sunpos(dt, latitude, longitude, elevation, delta_t=0, radians=Fa
     """
       
     jd = julian_day(dt)
-    return _topo_pos_v(jd, latitude, longitude, elevation, delta_t, radians)
+    return _topo_pos(jd, latitude, longitude, elevation, delta_t, radians)
 
 def sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, atmos_refract=None, delta_t=0, radians=False):
     """Compute the observed and topocentric coordinates of the sun as viewed at the given time and location.
@@ -217,7 +256,7 @@ def sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, 
         atmos_refract = 0.5667
     
     jd = julian_day(dt)
-    return _pos_v(jd, latitude, longitude, elevation, temperature, pressure, atmos_refract, delta_t, radians)
+    return _pos(jd, latitude, longitude, elevation, temperature, pressure, atmos_refract, delta_t, radians)
 
 def observed_sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, atmos_refract=None, delta_t=0, radians=False):
     """Compute the observed coordinates of the sun as viewed at the given time and location.
@@ -361,53 +400,7 @@ def test(args):
     for n, e in zip(err_names, rms_err):
         print('{}: {}'.format(n, e))
 
-#JIT is disabled if: 
-#  We can't import numba
-#  OR, JIT was disabled via the environment variable 'NUMBA_DISABLE_JIT'
-#  OR, JIT was disabled by setting numba.config.DISABLE_JIT = True before importing sunposition
-#  OR, --jit was not specified on the command line
-#the defer_decorator class leaves functions unmodified in the global scope, but will apply the decorator
-class defer_decorator:
-    def __init__(self, decorator):
-        self.decorator = decorator
-        self.funcs = [] # [(function, args, kwargs), ...]
-
-    def __call__(self, *args, **kw):
-        if len(args) == 1 and len(kw) == 0 and callable(args[0]):
-            #called as a naked decorator with no args or kw -- use None to indicate
-            self.funcs.append((args[0], None, None))
-            return args[0]
-        else:
-            #called as a decorator with args/kw
-            def wrapper(f):
-                self.funcs.append((f, args, kw))
-                return f
-            return wrapper
-    
-    def apply(self):
-        if self.decorator is None:
-            return False
-        new_funcs = {}
-        for f, args, kw in self.funcs:
-            if args is None:
-                new_funcs[f.__name__] = self.decorator(f)
-            else:
-                new_funcs[f.__name__] = self.decorator(*args,**kw)(f)
-        globals().update(new_funcs)
-        return True
-
-try:
-    #scipy is required for numba's linear algebra
-    import numba, scipy
-    njit = defer_decorator(numba.njit)
-    _ENABLE_JIT = (numba.config.DISABLE_JIT == 0) and not os.environ.get('NUMBA_DISABLE_JIT',False)
-except:
-    njit = defer_decorator(None)
-    _ENABLE_JIT = False
-
-
 #define the polval that we will use if jit is enabled
-#this will be remembered by defer_decorator and used if jit.apply() is called
 @njit
 def _polyval(p, x):
     y = 0.0
@@ -415,8 +408,9 @@ def _polyval(p, x):
         y = y*x + v
     return y
 
-#otherwise we just want to use numpy's polyval
-_polyval = np.polyval
+if not _ENABLE_JIT:
+    #use numpy's polyval if not using jit
+    _polyval = np.polyval
 
 
 ## Dates and times
@@ -577,9 +571,10 @@ def _string_to_posix_time(s):
     #apply tod and tz to rd & multiply by seconds per day
     return 86400*(rd + tod - tz/24)
 
+#we can't use numba to accelerate _string_to_posix_time, so use np.vectorize here
 _string_to_posix_time_v = np.vectorize(_string_to_posix_time)
 
-@njit
+@vectorize(cache=_ENABLE_JIT)
 def _julian_day(t):
     """Calculate the Julian Day from posix timestamp (seconds since epoch)"""
     year, month, day = _posix_time_to_date(t)
@@ -594,8 +589,7 @@ def _julian_day(t):
     jd = int(365.25 * (year + 4716)) + int(30.6001 * (month + 1)) + day + b - 1524.5
     return jd
 
-_julian_day_v = np.vectorize(_julian_day)
-
+#we can't use numba to accelerate _get_timestamp, so use np.vectorize here
 @np.vectorize
 def _get_timestamp(dt):
     return dt.timestamp()
@@ -988,6 +982,8 @@ def _norm_lat_lon(lat,lon):
         lon = lon % 360
     return lat,lon
 
+#we use np.vectorize because numba's vectorize can't handle tuple return
+@np.vectorize
 @njit
 def _topo_pos(jd,lat,lon,elev,dt,radians):
     """compute RA,dec,H, all in degrees"""
@@ -998,8 +994,8 @@ def _topo_pos(jd,lat,lon,elev,dt,radians):
     else:
         return RA, dec, H
 
-_topo_pos_v = np.vectorize(_topo_pos)
-
+#we use np.vectorize because numba's vectorize can't handle tuple return
+@np.vectorize
 @njit
 def _pos(jd,lat,lon,elev,temp,press,atmos_refract,dt,radians):
     """Compute azimuth,zenith,RA,dec,H"""
@@ -1009,22 +1005,7 @@ def _pos(jd,lat,lon,elev,temp,press,atmos_refract,dt,radians):
     if radians:
         return np.deg2rad(azimuth), np.deg2rad(zenith), np.deg2rad(RA), np.deg2rad(dec), np.deg2rad(H)
     else:
-        return azimuth,zenith,RA,dec,H
-
-_pos_v = np.vectorize(_pos)
-
-@njit
-def _arcdist(p0,p1):
-    a0,z0 = p0[...,0], p0[...,1]
-    a1,z1 = p1[...,0], p1[...,1]
-    return np.arccos(np.cos(z0)*np.cos(z1)+np.cos(a0-a1)*np.sin(z0)*np.sin(z1))
-
-@njit
-def _arcdist_deg(p0,p1):
-    return np.rad2deg(_arcdist(np.deg2rad(p0),np.deg2rad(p1)))
+        return azimuth, zenith, RA, dec, H
 
 if __name__ == '__main__':
     sys.exit(main())
-
-if _ENABLE_JIT:
-    njit.apply()
