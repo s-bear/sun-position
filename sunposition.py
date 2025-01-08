@@ -141,7 +141,7 @@ def main(args=None, **kwargs):
     az, zen, ra, dec, h = sunpos(t, lat, lon, elev, temp, p, dt, rad)
     if args.csv:
         #machine readable
-        print(f'{t}, {dt}, {lat}, {lon}, {elev}, {temp}, {p}, {az}, {zen}, {ra}, {dec}, {h}')
+        print(f'{t}, {dt}, {lat}, {lon}, {elev}, {temp}, {p}, {az:0.6f}, {zen:0.6f}, {ra:0.6f}, {dec:0.6f}, {h:0.6f}')
     else:
         dr = 'rad' if args.radians else 'deg'
         ts = _posix_time_to_string(t)
@@ -149,8 +149,8 @@ def main(args=None, **kwargs):
         print(f"Lat, Lon, Elev = {lat} deg, {lon} deg, {elev} m")
         print(f"T, P = {temp} C, {p} mbar")
         print("Results:")
-        print(f"Azimuth, zenith = {az} {dr}, {zen} {dr}")
-        print(f"RA, dec, H = {ra} {dr}, {dec} {dr}, {h} {dr}")\
+        print(f"Azimuth, zenith = {az:0.6f} {dr}, {zen:0.6f} {dr}")
+        print(f"RA, dec, H = {ra:0.6f} {dr}, {dec:0.6f} {dr}, {h:0.6f} {dr}")\
 
     return 0
 
