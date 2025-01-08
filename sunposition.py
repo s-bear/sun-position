@@ -613,7 +613,7 @@ def julian_day(dt):
     jd : ndarray
         datetimes converted to fractional Julian days
     """
-    dt = np.atleast_1d(dt)
+    dt = np.asarray(dt)
 
     if np.issubdtype(dt.dtype, str):
         t = _string_to_posix_time_v(dt)
@@ -623,7 +623,8 @@ def julian_day(dt):
         t = dt.astype('datetime64[us]').astype(np.int64)/1e6
     else:
         t = dt #assume it's a posix timestamp
-    return _julian_day_v(t)
+    # use [()] to "unwrap" scalar values out of np.array
+    return _julian_day(t)[()]
 
 @njit
 def _julian_ephemeris_day(jd, deltat):
