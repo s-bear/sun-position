@@ -111,7 +111,7 @@ def main(args=None, **kw):
         args.time = datetime.utcfromtimestamp(int(args.time))
 
     #NB: jit is a defer_decorator, defined below
-    if args.jit and not jit.apply():
+    if args.jit and not njit.apply():
         print('WARNING: JIT unavailable (requires numba and scipy)',file=sys.stderr)
 
     if args.test:
@@ -409,16 +409,16 @@ class defer_decorator:
 try:
     #scipy is required for numba's linear algebra
     import numba, scipy
-    jit = defer_decorator(numba.jit)
+    njit = defer_decorator(numba.njit)
     _ENABLE_JIT = (numba.config.DISABLE_JIT == 0) and not os.environ.get('NUMBA_DISABLE_JIT',False)
 except:
-    jit = defer_decorator(None)
+    njit = defer_decorator(None)
     _ENABLE_JIT = False
 
 
 #define the polval that we will use if jit is enabled
 #this will be remembered by defer_decorator and used if jit.apply() is called
-@jit(nopython=True)
+@njit
 def _polyval(p, x):
     y = 0.0
     for i,v in enumerate(p):
@@ -456,22 +456,22 @@ def _julian_day(dt):
     jd = int(365.25 * (yr + 4716)) + int(30.6001 * (mo + 1)) + dy + b - 1524.5
     return jd
 
-@jit(nopython=True)
+@njit
 def _julian_ephemeris_day(jd, deltat):
     """Calculate the Julian Ephemeris Day from the Julian Day and delta-time = (terrestrial time - universal time) in seconds"""
     return jd + deltat / 86400.0
 
-@jit(nopython=True)
+@njit
 def _julian_century(jd):
     """Caluclate the Julian Century from Julian Day or Julian Ephemeris Day"""
     return (jd - 2451545.0) / 36525.0
 
-@jit(nopython=True)
+@njit
 def _julian_millennium(jc):
     """Calculate the Julian Millennium from Julian Ephemeris Century"""
     return jc / 10.0
 
-@jit(nopython=True)
+@njit
 def _cos_sum(x, coeffs):
     y = np.zeros(len(coeffs))
     for i, abc in enumerate(coeffs):
@@ -535,7 +535,7 @@ _EHL = (
     (25.0, 3.16, 4690.48)])
 )
 
-@jit(nopython=True)
+@njit
 def _heliocentric_longitude(jme):
     """Compute the Earth Heliocentric Longitude (L) in degrees given the Julian Ephemeris Millennium"""
     #L5, ..., L0
@@ -553,7 +553,7 @@ _EHB = (
     (44.0, 3.7, 2352.87), (32.0, 4.0, 1577.34)])
 )
 
-@jit(nopython=True)
+@njit
 def _heliocentric_latitude(jme):
     """Compute the Earth Heliocentric Latitude (B) in degrees given the Julian Ephemeris Millennium"""
     Bi = _cos_sum(jme, _EHB)
@@ -592,7 +592,7 @@ _EHR = (
     (26.0, 4.59, 10447.39)])
 )
 
-@jit(nopython=True)
+@njit
 def _heliocentric_radius(jme):
     """Compute the Earth Heliocentric Radius (R) in astronimical units given the Julian Ephemeris Millennium"""
     
@@ -600,14 +600,14 @@ def _heliocentric_radius(jme):
     R = _polyval(Ri, jme) / 1e8
     return R
 
-@jit(nopython=True)
+@njit
 def _heliocentric_position(jme):
     """Compute the Earth Heliocentric Longitude, Latitude, and Radius given the Julian Ephemeris Millennium
         Returns (L, B, R) where L = longitude in degrees, B = latitude in degrees, and R = radius in astronimical units
     """
     return _heliocentric_longitude(jme), _heliocentric_latitude(jme), _heliocentric_radius(jme)
 
-@jit(nopython=True)
+@njit
 def _geocentric_position(helio_pos):
     """Compute the geocentric latitude (Theta) and longitude (beta) (in degrees) of the sun given the earth's heliocentric position (L, B, R)"""
     L,B,R = helio_pos
@@ -615,7 +615,7 @@ def _geocentric_position(helio_pos):
     b = -B
     return (th, b)
 
-@jit(nopython=True)
+@njit
 def _ecliptic_obliquity(jme, delta_epsilon):
     """Calculate the true obliquity of the ecliptic (epsilon, in degrees) given the Julian Ephemeris Millennium and the obliquity"""
     u = jme/10
@@ -676,7 +676,7 @@ _NLO_CD = np.array([(92025.0,   8.9), (5736.0,    -3.1), (977.0, -0.5), (-895.0,
         (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), (0.0, 0.0),
         (0.0, 0.0), (0.0, 0.0), (0.0, 0.0)])
 
-@jit(nopython=True)
+@njit
 def _nutation_obliquity(jce):
     """compute the nutation in longitude (delta_psi) and the true obliquity (epsilon) given the Julian Ephemeris Century"""
     #mean elongation of the moon from the sun, in radians:
@@ -703,12 +703,12 @@ def _nutation_obliquity(jce):
 
     return dp, e
 
-@jit(nopython=True)
+@njit
 def _abberation_correction(R):
     """Calculate the abberation correction (delta_tau, in degrees) given the Earth Heliocentric Radius (in AU)"""
     return -20.4898/(3600*R)
 
-@jit(nopython=True)
+@njit
 def _sun_longitude(helio_pos, delta_psi):
     """Calculate the apparent sun longitude (lambda, in degrees) and geocentric latitude (beta, in degrees) given the earth heliocentric position and delta_psi"""
     L,B,R = helio_pos
@@ -717,7 +717,7 @@ def _sun_longitude(helio_pos, delta_psi):
     ll = theta + delta_psi + _abberation_correction(R)
     return ll, beta
 
-@jit(nopython=True)
+@njit
 def _greenwich_sidereal_time(jd, delta_psi, epsilon):
     """Calculate the apparent Greenwich sidereal time (v, in degrees) given the Julian Day"""
     jc = _julian_century(jd)
@@ -726,7 +726,7 @@ def _greenwich_sidereal_time(jd, delta_psi, epsilon):
     v = v0 + delta_psi*np.cos(np.deg2rad(epsilon))
     return v
 
-@jit(nopython=True)
+@njit
 def _sun_ra_decl(llambda, epsilon, beta):
     """Calculate the sun's geocentric right ascension (alpha, in degrees) and declination (delta, in degrees)"""
     l = np.deg2rad(llambda)
@@ -738,7 +738,7 @@ def _sun_ra_decl(llambda, epsilon, beta):
     delta = np.rad2deg(delta)
     return alpha, delta
 
-@jit(nopython=True)
+@njit
 def _sun_topo_ra_decl_hour(latitude, longitude, elevation, jd, delta_t = 0):
     """Calculate the sun's topocentric right ascension (alpha'), declination (delta'), and hour angle (H')"""
     
@@ -780,7 +780,7 @@ def _sun_topo_ra_decl_hour(latitude, longitude, elevation, jd, delta_t = 0):
 
     return alpha_prime, delta_prime, H_prime
 
-@jit(nopython=True)
+@njit
 def _sun_topo_azimuth_zenith(latitude, delta_prime, H_prime, temperature=14.6, pressure=1013, atmos_refract=0.5667):
     """Compute the sun's topocentric azimuth and zenith angles
     azimuth is measured eastward from north, zenith from vertical
@@ -804,7 +804,7 @@ def _sun_topo_azimuth_zenith(latitude, delta_prime, H_prime, temperature=14.6, p
     Phi = (gamma + 180) % 360 #azimuth from north
     return Phi, zenith, delta_e
 
-@jit(nopython=True)
+@njit
 def _norm_lat_lon(lat,lon):
     if lat < -90 or lat > 90:
         #convert to cartesian and back
@@ -818,7 +818,7 @@ def _norm_lat_lon(lat,lon):
         lon = lon % 360
     return lat,lon
 
-@jit(nopython=True)
+@njit
 def _topo_pos(jd,lat,lon,elev,dt,radians):
     """compute RA,dec,H, all in degrees"""
     lat,lon = _norm_lat_lon(lat,lon)
@@ -830,7 +830,7 @@ def _topo_pos(jd,lat,lon,elev,dt,radians):
 
 _topo_pos_v = np.vectorize(_topo_pos)
 
-@jit(nopython=True)
+@njit
 def _pos(jd,lat,lon,elev,temp,press,atmos_refract,dt,radians):
     """Compute azimuth,zenith,RA,dec,H"""
     lat,lon = _norm_lat_lon(lat,lon)
@@ -860,21 +860,18 @@ def julian_day(dt):
     t = _calendar_time(dt)
     return _julian_day(t)
 
-@jit(nopython=True)
+@njit
 def _arcdist(p0,p1):
     a0,z0 = p0[...,0], p0[...,1]
     a1,z1 = p1[...,0], p1[...,1]
     return np.arccos(np.cos(z0)*np.cos(z1)+np.cos(a0-a1)*np.sin(z0)*np.sin(z1))
 
-@jit(nopython=True)
+@njit
 def _arcdist_deg(p0,p1):
     return np.rad2deg(_arcdist(np.deg2rad(p0),np.deg2rad(p1)))
-
-
-
 
 if __name__ == '__main__':
     sys.exit(main())
 
 if _ENABLE_JIT:
-    jit.apply()
+    njit.apply()
