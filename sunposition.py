@@ -144,7 +144,7 @@ def main(args=None, **kwargs):
         print(f'{t}, {dt}, {lat}, {lon}, {elev}, {temp}, {p}, {az}, {zen}, {ra}, {dec}, {h}')
     else:
         dr = 'rad' if args.radians else 'deg'
-        ts = datetime.datetime.fromtimestamp(t, tz=datetime.timezone.utc).isoformat()
+        ts = _posix_time_to_string(t)
         print(f"Computing sun position at T = {ts} + {dt} s")
         print(f"Lat, Lon, Elev = {lat} deg, {lon} deg, {elev} m")
         print(f"T, P = {temp} C, {p} mbar")
@@ -570,6 +570,18 @@ def _string_to_posix_time(s):
     #apply tod and tz to rd & multiply by seconds per day
     return 86400*(rd + tod - tz/24)
 
+
+def _posix_time_to_string(t):
+    '''Format a POSIX timestamp as ISO8601 with millisecond precision'''
+    #we need our own because datetime.datetime.fromtimestamp() doesn't support dates before epoch
+    year, month, fday = _posix_time_to_date(t)
+    day = int(fday)
+    ms = round((fday - day)*86400000) #milliseconds into the day
+    hour, ms = divmod(ms, 3600000) #hour, ms into the hour
+    minute, ms = divmod(ms, 60000) #minute, ms into the minute
+    sec, ms = divmod(ms, 1000) #second, millisecond
+    return f'{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{sec:02}.{ms:03}Z'
+    
 #we can't use numba to accelerate _string_to_posix_time, so use np.vectorize here
 _string_to_posix_time_v = np.vectorize(_string_to_posix_time)
 
