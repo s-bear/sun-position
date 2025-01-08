@@ -22,7 +22,8 @@
 
 import os, sys, argparse
 import numpy as np
-from datetime import datetime
+import time,datetime
+import re
 
 VERSION = '1.1.1'
 
@@ -97,18 +98,7 @@ def main(args=None, **kw):
         print("Implemented by Samuel Powell, 2016-2023, https://github.com/s-bear/sun-position")
         return 0
 
-    if args.time == "now":
-        args.time = datetime.utcnow()
-    elif ":" in args.time and "-" in args.time:
-        try:
-            args.time = datetime.strptime(args.time,'%Y-%m-%d %H:%M:%S.%f') #with microseconds
-        except:
-            try:
-                args.time = datetime.strptime(args.time,'%Y-%m-%d %H:%M:%S.') #without microseconds
-            except:
-                args.time = datetime.strptime(args.time,'%Y-%m-%d %H:%M:%S')
-    else:
-        args.time = datetime.utcfromtimestamp(int(args.time))
+    args.time = _string_to_posix_time(args.time)
 
     #NB: jit is a defer_decorator, defined below
     if args.jit and not njit.apply():
@@ -311,20 +301,20 @@ def test(args):
     
     true_data = np.loadtxt(test_file, row_type, delimiter=',', skiprows=4)
     
-    def to_datetime(date_time_pair):
+    def to_timestamp(date_time_pair):
         s = str(b' '.join(date_time_pair),'UTF-8')
-        return datetime.strptime(s, '%m/%d/%Y %H:%M:%S')
+        dt = datetime.datetime.strptime(s, '%m/%d/%Y %H:%M:%S')
+        return dt.replace(tzinfo=datetime.timezone.utc).timestamp()
 
     def angle_diff(a1, a2, period=2*np.pi):
         """(a1 - a2 + d) % (2*d) - d; d = period/2"""
         d = period/2
         return ((a1 - a2 + d) % (period)) - d
     
-    dts = [to_datetime(dt_pair) for dt_pair in true_data[['Date_M/D/YYYY','Time_H:MM:SS']]]
+    ts = [to_timestamp(dt_pair) for dt_pair in true_data[['Date_M/D/YYYY','Time_H:MM:SS']]]
     lat,lon,elev,temp,press,deltat = params['latitude'],params['longitude'],params['elev'],params['temp'],params['press'],params['deltat']
     all_errs = []
-    for dt,truth in zip(dts,true_data):
-        t = _calendar_time(dt)
+    for t,truth in zip(ts,true_data):
         jd = _julian_day(t) #Julian_day
         jde = _julian_ephemeris_day(jd, deltat) #Julian_ephemeris_day
         jce = _julian_century(jde) #Julian_ephemeris_century
@@ -429,32 +419,211 @@ def _polyval(p, x):
 _polyval = np.polyval
 
 
-def _calendar_time(dt):
-    try:
-        x = dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, dt.microsecond
-        return x
-    except AttributeError:
-        try:
-            return _calendar_time(datetime.utcfromtimestamp(dt)) #will raise OSError if dt is not acceptable
-        except:
-            raise TypeError('dt must be datetime object or POSIX timestamp')
+## Dates and times
+# this application has unusual date/time requirements that are not supported by
+# Python's time or datetime libraries. Specifically:
+# 1. The subroutines use Julian days to represent time
+# 2. The algorithm supports dates from year -2000 to 6000 (datetime supports years 1-9999)
 
-@jit(nopython=True)
-def _julian_day(dt):
-    """Calculate the Julian Day from a (year, month, day, hour, minute, second, microsecond) tuple"""
+# For that reason, we will use our own date & time codes
+# The Julian Day conversion in Reda & Andreas's paper required the Gregorian
+#  (year, month, day), with the time of day specified as a fractional day, all in UTC.
+# We can use the algorithms in "Euclidean affine functions and their application to calendar algorithms" C. Neri, L. Schneider (2022) https://doi.org/10.1002/spe.3172
+#  to convert rata die timestamps (day number since epoch) to Gregorian (year, month, day)
+# We need to be able to convert the following to Julian days:
+#  datetime.datetime
+#  numpy.datetime64
+#  int/float POSIX timestamp
+#  ISO8601 string
+
+@njit
+def _date_to_rd(year, month, day):
+    '''Convert year, month, day to rata die (day number)
+    Based on the algorithm in: "Euclidean affine functions and their application to calendar algorithms" C. Neri, L. Schneider (2022) https://doi.org/10.1002/spe.3172
+    day may be fractional, fractional part is added to return value
+    '''
+    # we include explicit types everywhere to match the reference implementation, which is all 32-bit
+    # Python will still use 64-bit math for some of the intermediate calculations, but it shouldn't change the results
+    Y_G = np.int32(year)
+    M_G = np.uint32(month)
+    D_G = np.uint32(day)
+    tod = day - D_G #split fractional part
+
+    s = np.uint32(82) #static uint32_t constexpr s = 82;
+    K = np.uint32(719468 + 146097 * s) #static uint32_t constexpr K = 719468 + 146097 * s;
+    L = np.uint32(400*s) #static uint32_t constexpr L = 400 * s;
+    #  int32_t to_rata_die(int32_t Y_G, uint32_t M_G, uint32_t D_G) {
+    # Map. (Notice the year correction, including type change.)
+    J = (M_G <= 2) # uint32_t const J = M_G <= 2;
+    Y = np.uint32(Y_G + L - J) # uint32_t const Y = (uint32_t(Y_G) + L) - J;
+    # uint32_t const M = J ? M_G + 12 : M_G;
+    if J: 
+        M = np.uint32(M_G + 12)
+    else:
+        M = M_G
+    
+    D = np.uint32(D_G - 1) # uint32_t const D = D_G - 1;
+    C = np.uint32(Y // 100) # uint32_t const C = Y / 100;
+
+    # Rata die.
+    y_star = np.uint32(1461 * Y // 4 - C + C // 4) # uint32_t const y_star = 1461 * Y / 4 - C + C / 4;
+    m_star = np.uint32((979 * M - 2919) // 32) # uint32_t const m_star = (979 * M - 2919) / 32;
+    N      = np.uint32(y_star + m_star + D) # uint32_t const N      = y_star + m_star + D;
+    
+    # Rata die shift.
+    N_U = np.int32(N - K) # uint32_t const N_U = N - K; -- the original casts to int32 at return, we do it here
+    return N_U + tod
+
+@njit
+def _date_to_posix_time(year, month, day):
+    return _date_to_rd(year, month, day)*86400 # rata die (fractional day number) x 86400 seconds per day
+
+@njit
+def _rd_to_date(rd):
+    '''convert integer rata die (day number) to year, month, day
+    "Euclidean affine functions and their application to calendar algorithms" C. Neri, L. Schneider (2022) https://doi.org/10.1002/spe.3172
+    '''
+    #  date32_t to_date(int32_t N_U) {
+    N_U = np.int32(rd)
+    tod = rd - N_U #split fractional part
+
+    s = np.uint32(82) #static uint32_t constexpr s = 82;
+    K = np.uint32(719468 + 146097 * s) #static uint32_t constexpr K = 719468 + 146097 * s;
+    L = np.uint32(400*s) #static uint32_t constexpr L = 400 * s;
+    
+    # Rata die shift.
+    N = np.uint32(N_U + K) # uint32_t const N = N_U + K;
+
+    # Century.
+    N_1 = np.uint32(4 * N + 3) # uint32_t const N_1 = 4 * N + 3;
+    # uint32_t const C   = N_1 / 146097;
+    # uint32_t const N_C = N_1 % 146097 / 4;
+    C, N_C = divmod(N_1, 146097)
+    C, N_C = np.uint32(C), np.uint32(N_C // 4)
+
+    # Year.
+    N_2 = np.uint32(4 * N_C + 3) # uint32_t const N_2 = 4 * N_C + 3;
+    P_2 = 2939745 * np.uint64(N_2) # uint64_t const P_2 = uint64_t(2939745) * N_2;
+    # uint32_t const Z   = uint32_t(P_2 / 4294967296);
+    # uint32_t const N_Y = uint32_t(P_2 % 4294967296) / 2939745 / 4;
+    Z, N_Y = divmod(P_2, 4294967296)
+    Z, N_Y = np.uint32(Z), np.uint32(N_Y)
+    N_Y = np.uint32((N_Y // 2939745) // 4)
+    Y   = np.uint32(100 * C + Z) # uint32_t const Y   = 100 * C + Z;
+
+    # Month and day. 
+    N_3 = np.uint32(2141 * N_Y + 197913) # uint32_t const N_3 = 2141 * N_Y + 197913;
+    # uint32_t const M   = N_3 / 65536;
+    # uint32_t const D   = N_3 % 65536 / 2141;
+    M, D = divmod(N_3, 65536)
+    M, D = np.uint32(M), np.uint32(D // 2141)
+
+    # Map. (Notice the year correction, including type change.)
+    J   = (N_Y >= 306) # uint32_t const J   = N_Y >= 306;
+    Y_G = np.int32(Y - L + J) # int32_t  const Y_G = (Y - L) + J;
+    # uint32_t const M_G = J ? M - 12 : M;
+    if J:
+        M_G = np.uint32(M - 12)
+    else:
+        M_G = M
+
+    D_G = np.uint32(D + 1) # uint32_t const D_G = D + 1;
+    # return { Y_G, M_G, D_G };
+    return (Y_G, M_G, D_G + tod)
+
+@njit
+def _posix_time_to_date(t):
+    '''POSIX timestamp to (year, month, day)'''
+    return _rd_to_date(t/86400) # (timestamp in seconds)/86400 -> rata die (fractional day number)
+
+_iso8601_re = re.compile(r'([+-]?\d{1,4})-?([01]\d)-?([0-3]\d)[T ]([012]\d):?([0-6]\d):?([0-6]\d(?:\.\d+)?)?(?:Z|(?:([+-]\d{2})(?::?(\d{2}))?))?')
+def _string_to_posix_time(s):
+    '''parse timestamp string to posix time, assumes UTC if timezone is not specified
+    strings may be:
+     - "now" -- which gets the current time
+     - POSIX timestamp string
+     - ISO 8601 formatted string (including negative years)
+    '''
+    if s == 'now':
+        return time.time()
+    try:
+        return float(s)
+    except ValueError: #
+        pass
+    m = _iso8601_re.match(s)
+    if not m:
+        raise ValueError('Could not parse timestamp string (must be "now" or float or ISO8601)')
+    year,month,day,hour,minute,second,tz_hour,tz_minute = m.groups()
+    if second is None: second = 0
+    if tz_hour is None: tz_hour = 0
+    if tz_minute is None: tz_minute = 0
+    year, month, day = int(year),int(month),int(day)
+    hour,minute,second = int(hour), int(minute), float(second)
+    tod = (hour + (minute + second/60)/60)/24 # time of day, in days
+    tz_hour, tz_minute = int(tz_hour), int(tz_minute)
+    if tz_hour < 0:
+        tz = tz_hour - tz_minute/60 # timezone offset, in hours
+    else:
+        tz = tz_hour + tz_minute/60 # timezone offset, in hours
+    rd = _date_to_rd(year, month, day) #to rata die
+    #validate the date using _rd_to_date(_date_to_rd()) round trip
+    if _rd_to_date(rd) != (year, month, day):
+        raise ValueError('Invalid date')
+    if tod > 1:
+        raise ValueError('Invalid time')
+    # UTC offsets vary from -12:00 (US Minor Outlying Islands) to +14:00 (Kiribati)
+    if tz < -12 or tz > 14:
+        raise ValueError('Invalid timezone')
+    #apply tod and tz to rd & multiply by seconds per day
+    return 86400*(rd + tod - tz/24)
+
+_string_to_posix_time_v = np.vectorize(_string_to_posix_time)
+
+@njit
+def _julian_day(t):
+    """Calculate the Julian Day from posix timestamp (seconds since epoch)"""
+    year, month, day = _posix_time_to_date(t)
     # year and month numbers
-    yr, mo, dy, hr, mn, sc, us = dt
-    if mo <= 2:  # From paper: "if M = 1 or 2, then Y = Y - 1 and M = M + 12"
-        mo += 12
-        yr -= 1
-    # day of the month with decimal time
-    dy = dy + hr/24.0 + mn/(24.0*60.0) + sc/(24.0*60.0*60.0) + us/(24.0*60.0*60.0*1e6)
+    if month <= 2:  # From paper: "if M = 1 or 2, then Y = Y - 1 and M = M + 12"
+        month += 12
+        year -= 1
     # b is equal to 0 for the julian calendar and is equal to (2- A +
     # INT(A/4)), A = INT(Y/100), for the gregorian calendar
-    a = int(yr / 100)
+    a = int(year / 100)
     b = 2 - a + int(a / 4)
-    jd = int(365.25 * (yr + 4716)) + int(30.6001 * (mo + 1)) + dy + b - 1524.5
+    jd = int(365.25 * (year + 4716)) + int(30.6001 * (month + 1)) + day + b - 1524.5
     return jd
+
+_julian_day_v = np.vectorize(_julian_day)
+
+@np.vectorize
+def _get_timestamp(dt):
+    return dt.timestamp()
+
+def julian_day(dt):
+    """Convert datetimes, datetime64s, or string timestamps, or posix timestamps to Julian days
+
+    Parameters
+    ----------
+    dt : array_like
+        UTC datetime objects or UTC timestamps (as per datetime.utcfromtimestamp)
+
+    Returns
+    -------
+    jd : ndarray
+        datetimes converted to fractional Julian days
+    """
+    dt = np.atleast_1d(dt)
+
+    if np.issubdtype(dt.dtype, str):
+        t = _string_to_posix_time_v(dt)
+    elif np.issubdtype(dt.dtype, datetime.datetime):
+        t = _get_timestamp(dt)
+    elif np.issubdtype(dt.dtype, np.datetime64):
+        t = dt.astype('datetime64[us]').astype(np.int64)/1e6
+    else:
+        t = dt #assume it's a posix timestamp
+    return _julian_day_v(t)
 
 @njit
 def _julian_ephemeris_day(jd, deltat):
@@ -842,23 +1011,6 @@ def _pos(jd,lat,lon,elev,temp,press,atmos_refract,dt,radians):
         return azimuth,zenith,RA,dec,H
 
 _pos_v = np.vectorize(_pos)
-
-@np.vectorize
-def julian_day(dt):
-    """Convert UTC datetimes or UTC timestamps to Julian days
-
-    Parameters
-    ----------
-    dt : array_like
-        UTC datetime objects or UTC timestamps (as per datetime.utcfromtimestamp)
-
-    Returns
-    -------
-    jd : ndarray
-        datetimes converted to fractional Julian days
-    """
-    t = _calendar_time(dt)
-    return _julian_day(t)
 
 @njit
 def _arcdist(p0,p1):
