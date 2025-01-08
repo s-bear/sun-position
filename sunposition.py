@@ -129,15 +129,14 @@ def main(args=None, **kwargs):
         print("Implemented by Samuel Powell, 2016-2025, https://github.com/s-bear/sun-position")
         return 0
 
-    args.time = _string_to_posix_time(args.time)
-
     if _ENABLE_JIT and numba is None:
         print('WARNING: JIT unavailable (requires numba and scipy)',file=sys.stderr)
 
     if args.test:
         return test(args)
 
-    t, lat, lon, elev = args.time, args.latitude, args.longitude, args.elevation
+    t = _string_to_posix_time(args.time)
+    lat, lon, elev = args.latitude, args.longitude, args.elevation
     temp, p, dt, rad = args.temperature, args.pressure, args.dt, args.radians
 
     az, zen, ra, dec, h = sunpos(t, lat, lon, elev, temp, p, dt, rad)
@@ -146,7 +145,8 @@ def main(args=None, **kwargs):
         print(f'{t}, {dt}, {lat}, {lon}, {elev}, {temp}, {p}, {az}, {zen}, {ra}, {dec}, {h}')
     else:
         dr = 'rad' if args.radians else 'deg'
-        print(f"Computing sun position at T = {t} + {dt} s")
+        ts = datetime.datetime.fromtimestamp(t, tz=datetime.timezone.utc).isoformat()
+        print(f"Computing sun position at T = {ts} + {dt} s")
         print(f"Lat, Lon, Elev = {lat} deg, {lon} deg, {elev} m")
         print(f"T, P = {temp} C, {p} mbar")
         print("Results:")
