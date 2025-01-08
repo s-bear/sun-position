@@ -38,7 +38,7 @@ _arg_parser = argparse.ArgumentParser(prog='sunposition',description='Compute su
 _arg_parser.add_argument('--test',help='Test against output from https://midcdmz.nrel.gov/solpos/spa.html')
 _arg_parser.add_argument('--version',action='version',version=f'%(prog)s {VERSION}')
 _arg_parser.add_argument('--citation',action='store_true',help='Print citation information')
-_arg_parser.add_argument('-t','--time',type=str,default='now',help='"now" or date and time (UTC) in "YYYY-MM-DD hh:mm:ss.ssssss" format or a (UTC) POSIX timestamp')
+_arg_parser.add_argument('-t','--time',type=str,default='now',help='"now" or date and time in ISO8601 format or a (UTC) POSIX timestamp')
 _arg_parser.add_argument('-lat','--latitude',type=float,default=51.48,help='observer latitude, in decimal degrees, positive for north')
 _arg_parser.add_argument('-lon','--longitude',type=float,default=0.0,help='observer longitude, in decimal degrees, positive for east')
 _arg_parser.add_argument('-e','--elevation',type=float,default=0,help='observer elevation, in meters')
@@ -50,7 +50,6 @@ _arg_parser.add_argument('-r','--radians',action='store_true',help='Output in ra
 _arg_parser.add_argument('--csv',action='store_true',help='Comma separated values (time,dt,lat,lon,elev,temp,pressure,az,zen,RA,dec,H)')
 _arg_parser.add_argument('--no-jit',action='store_false',dest='jit',default=None,help='Disable Numba acceleration (default, if Numba is not available)')
 _arg_parser.add_argument('--jit',action='store_true',default=None,help='Enable Numba acceleration (default, if Numba is available)')
-
 
 if __name__ == '__main__':
     #parse args here, so we can disable jit before defining all of the functions
@@ -93,7 +92,7 @@ def main(args=None, **kwargs):
     citation : bool
         If true, print citation information and quit
     time : str
-        "now" or date and time (UTC) in "YYYY-MM-DD hh:mm:ss.ssssss" format or a UTC POSIX timestamp
+        "now" or date and time in ISO8601 format or a UTC POSIX timestamp
     latitude : float
         observer latitude in decimal degrees, positive for north
     longitude : float
@@ -196,8 +195,8 @@ def topocentric_sunpos(dt, latitude, longitude, elevation, delta_t=0, radians=Fa
 
     Parameters
     ----------
-    dt : array_like of datetime or float
-        UTC datetime objects or UTC timestamps (as per datetime.utcfromtimestamp) representing the times of observations
+    dt : array_like of datetime, datetime64, str, or float
+        datetime.datetime, numpy.datetime64, ISO8601 strings, or POSIX timestamps (float or int)
     latitude, longitude : array_like of float
         decimal degrees, positive for north of the equator and east of Greenwich
     elevation : array_like of float
@@ -222,8 +221,8 @@ def sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, 
 
     Parameters
     ----------
-    dt : array_like of datetime or float
-        UTC datetime objects or UTC timestamps (as per datetime.utcfromtimestamp) representing the times of observations
+    dt : array_like of datetime, datetime64, str, or float
+        datetime.datetime, numpy.datetime64, ISO8601 strings, or POSIX timestamps (float or int)
     latitude, longitude : array_like of float
         decimal degrees, positive for north of the equator and east of Greenwich
     elevation : array_like of float
@@ -263,8 +262,8 @@ def observed_sunpos(dt, latitude, longitude, elevation, temperature=None, pressu
 
     Parameters
     ----------
-    dt : array_like of datetime or float
-        UTC datetime objects or UTC timestamps (as per datetime.utcfromtimestamp) representing the times of observations
+    dt : array_like of datetime, datetime64, str, or float
+        datetime.datetime, numpy.datetime64, ISO8601 strings, or POSIX timestamps (float or int)
     latitude, longitude : array_like of float
         decimal degrees, positive for north of the equator and east of Greenwich
     elevation : array_like of float
@@ -592,15 +591,16 @@ def _julian_day(t):
 #we can't use numba to accelerate _get_timestamp, so use np.vectorize here
 @np.vectorize
 def _get_timestamp(dt):
+    '''get the timestamp from a datetime.datetime object'''
     return dt.timestamp()
 
 def julian_day(dt):
-    """Convert datetimes, datetime64s, or string timestamps, or posix timestamps to Julian days
+    """Convert timestamps from various formats to Julian days
 
     Parameters
     ----------
     dt : array_like
-        UTC datetime objects or UTC timestamps (as per datetime.utcfromtimestamp)
+        datetime.datetime, numpy.datetime64, ISO8601 strings, or POSIX timestamps (float or int)
 
     Returns
     -------
