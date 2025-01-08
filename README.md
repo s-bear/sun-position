@@ -13,10 +13,11 @@ The zenith angle is 0 at vertical and positive towards the horizon.
 The code is hosted at https://github.com/s-bear/sun-position
 
 The module is a single python file `sunposition.py` and may be used as a command-line utility or imported into a script.
+The module depends only on [NumPy](https://numpy.org) but can optionally use [Numba](https://numba.pydata.org/) for performance improvements.
 
 ## Installation
 
-`sunposition` is hosted at https://pypi.org/project/sunposition/ and may be installed using `pip`:
+`sunposition` is hosted at [https://pypi.org/project/sunposition/](https://pypi.org/project/sunposition/) and may be installed using `pip`:
 
 ```
 $ pip install sunposition
@@ -27,7 +28,7 @@ $ pip install sunposition
 ```
 $ sunposition --help
 usage: sunposition [-h] [--test TEST] [--version] [--citation] [-t TIME] [-lat LATITUDE] [-lon LONGITUDE]
-                   [-e ELEVATION] [-T TEMPERATURE] [-p PRESSURE] [-a ATMOS_REFRACT] [-dt DT] [-r] [--csv] [--jit]
+                   [-e ELEVATION] [-T TEMPERATURE] [-p PRESSURE] [-a ATMOS_REFRACT] [-dt DT] [-r] [--csv] [--no-jit] [--jit]
 
 Compute sun position parameters given the time and location
 
@@ -52,23 +53,24 @@ options:
   -dt DT                difference between earth's rotation time (TT) and universal time (UT1)
   -r, --radians         Output in radians instead of degrees
   --csv                 Comma separated values (time,dt,lat,lon,elev,temp,pressure,az,zen,RA,dec,H)
-  --jit                 Enable Numba acceleration (jit compilation time may overwhelm speed-up)
+  --no-jit              Disable Numba acceleration (default, if Numba is not available)
+  --jit                 Enable Numba acceleration (default, if Numba is available)
 
 $ sunposition
-Computing sun position at T = 2021-05-21 06:47:44.644873 + 0.0 s
+Computing sun position at T = 2025-01-08T05:36:30.836738+00:00 + 0.0 s
 Lat, Lon, Elev = 51.48 deg, 0.0 deg, 0 m
 T, P = 14.6 C, 1013.0 mbar
 Results:
-Azimuth, zenith = 86.68229367131721 deg, 66.38510410296101 deg
-RA, dec, H = 58.28648711185745 deg, 20.241411055526044 deg, 282.7836435018984 deg
+Azimuth, zenith = 98.68808549688168 deg, 111.80137110880389 deg
+RA, dec, H = 289.70290250817914 deg, -22.20483885012405 deg, -97.5449218180503 deg
 
 $ sunposition -t "1953-05-29 05:45:00" -lat 27.9881 -lon 86.9253 -e 8848
-Computing sun position at T = 1953-05-29 05:45:00 + 0.0 s
+Computing sun position at T = 1953-05-29T05:45:00.000Z + 0.0 s
 Lat, Lon, Elev = 27.9881 deg, 86.9253 deg, 8848.0 m
 T, P = 14.6 C, 1013.0 mbar
 Results:
-Azimuth, zenith = 137.73675146015 deg, 8.481271417778686 deg
-RA, dec, H = 65.7605040841157 deg, 21.576417030912577 deg, 353.8751689030205 deg
+Azimuth, zenith = 137.7367679094362 deg, 8.481270000945017 deg
+RA, dec, H = 65.76050110268717 deg, 21.576416571716344 deg, 353.87517188444895 deg
 ```
 
 An example test file is provided at https://raw.githubusercontent.com/s-bear/sun-position/master/sunposition_test.txt
@@ -86,14 +88,14 @@ import matplotlib.pyplot as plt
 # e.g. import os; os.environ['NUMBA_DISABLE_JIT'] = 1
 # or import numba; numba.config.DISABLE_JIT = True
 from sunposition import sunpos
-from datetime import datetime
+import time
 
 #evaluate on a 2 degree grid
 lon  = np.linspace(-180,180,181)
 lat = np.linspace(-90,90,91)
 LON, LAT = np.meshgrid(lon,lat)
 #at the current time
-now = datetime.utcnow()
+now = time.time()
 az,zen = sunpos(now,LAT,LON,0)[:2] #discard RA, dec, H
 #convert zenith to elevation
 elev = 90 - zen
@@ -123,7 +125,7 @@ Keywords: Global solar irradiance; Solar zenith angle; Solar azimuth angle; VSOP
 
 # LICENSE
 
-Copyright (c) 2023 Samuel Bear Powell, samuel.powell@uq.edu.au
+Copyright (c) 2025 Samuel Bear Powell, samuel.powell@uq.edu.au
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
