@@ -654,11 +654,26 @@ def _get_timestamp(dt):
     return dt.timestamp()
 
 def to_timestamp(dt):
-    '''Convert various date/time formats to POSIX timestamps
+    '''Convert various date/time formats to POSIX timestamps.
+
+    to_timestamp(dt : datetime.datetime) uses dt.timestamp(), which uses the
+        local timezone by default. To avoid timezone errors, use timezone aware
+        datetime functionality when possible.
+    
+    to_timestamp(dt : numpy.datetime64) converts to POSIX timestamps with 
+        microsecond precision: dt.astype('datetime64[us]').astype(np.int64)/1e6
+    
+    to_timestamp(dt : str) accepts 3 formats of string:
+        'now' : uses time.time() to return the current timestamp
+        floating point : parsed using float(dt)
+        ISO 8601 : a standard ISO date-time string, with some variation accepted
+                   eg. '2024-04-08T11:09:34-07:00', '2024-04-08 11:09:34-07:00',
+                       '20240408 110934-07', '20240408T180934.000Z', all 
+                       produce the same timestamp
     
     Parameters
     ----------
-    dt : array_like of datetime.datetime, numpy.datetime64, ISO8601 strings
+    dt : array_like of datetime.datetime, numpy.datetime64, ISO 8601 strings
         date/times to convert to POSIX timestamps. 
     
     Returns
