@@ -254,6 +254,7 @@ def sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, 
 
     if jit:
         args = np.broadcast_arrays(t, latitude, longitude, elevation, temperature, pressure, atmos_refract, delta_t)
+        for a in args: a.flags.writeable = False
         sp = _sunpos_vec_jit(*args)
         sp = tuple(a[()] for a in sp) #unwrap np.array() from scalars
     else:
@@ -292,6 +293,7 @@ def topocentric_sunpos(dt, latitude, longitude, elevation, delta_t=0, radians=Fa
     t = to_timestamp(dt)
     if jit:
         args = np.broadcast_arrays(t, latitude, longitude, elevation, delta_t)
+        for a in args: a.flags.writeable = False
         sp = _topo_sunpos_vec_jit(*args)
         sp = tuple(a[()] for a in sp) #unwrap np.array() from scalars
     else:
