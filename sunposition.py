@@ -464,7 +464,7 @@ def _date_to_rd(year, month, day):
     N      = np.uint32(y_star + m_star + D) # uint32_t const N      = y_star + m_star + D;
     
     # Rata die shift.
-    N_U = np.int32(N - K) # uint32_t const N_U = N - K; -- the original casts to int32 at return, we do it here
+    N_U = np.int32(N) - np.int32(K) # uint32_t const N_U = N - K; -- the original casts to int32 at return, we do it here
     return N_U + tod
 
 @njit
