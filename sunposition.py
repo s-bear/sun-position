@@ -136,9 +136,10 @@ def main(args=None, **kwargs):
 
     t = _string_to_posix_time(args.time)
     lat, lon, elev = args.latitude, args.longitude, args.elevation
-    temp, p, dt, rad = args.temperature, args.pressure, args.dt, args.radians
+    temp, p, ar, dt = args.temperature, args.pressure, args.atmos_refract, args.dt 
+    rad = args.radians
 
-    az, zen, ra, dec, h = sunpos(t, lat, lon, elev, temp, p, dt, rad)
+    az, zen, ra, dec, h = sunpos(t, lat, lon, elev, temp, p, ar, dt, rad)
     if args.csv:
         #machine readable
         print(f'{t}, {dt}, {lat}, {lon}, {elev}, {temp}, {p}, {az:0.6f}, {zen:0.6f}, {ra:0.6f}, {dec:0.6f}, {h:0.6f}')
