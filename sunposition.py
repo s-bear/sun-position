@@ -20,17 +20,15 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import os, sys, argparse, re, functools
+import os, sys, argparse, re
 import numpy as np
 import time,datetime
 
 try:
     #scipy is required for numba's linear algebra routines to work
     import numba, scipy
-    _ENABLE_JIT = True
 except:
     numba = None
-    _ENABLE_JIT = False
 
 VERSION = '1.2.0'
 
@@ -48,28 +46,43 @@ _arg_parser.add_argument('-a','--atmos_refract',type=float,default=0.5667,help='
 _arg_parser.add_argument('-dt',type=float,default=0.0,help='difference between earth\'s rotation time (TT) and universal time (UT1)')
 _arg_parser.add_argument('-r','--radians',action='store_true',help='Output in radians instead of degrees')
 _arg_parser.add_argument('--csv',action='store_true',help='Comma separated values (time,dt,lat,lon,elev,temp,pressure,az,zen,RA,dec,H)')
-_arg_parser.add_argument('--no-jit',action='store_false',dest='jit',default=None,help='Disable Numba acceleration (default, if Numba is not available)')
-_arg_parser.add_argument('--jit',action='store_true',default=None,help='Enable Numba acceleration (default, if Numba is available)')
-
-if __name__ == '__main__':
-    #parse args here, so we can disable jit before defining all of the functions
-    _args = _arg_parser.parse_args()
-    if _args.jit is not None:
-        _ENABLE_JIT = _args.jit
-    elif numba.config.DISABLE_JIT or os.environ.get('NUMBA_DISABLE_JIT',False):
-        _ENABLE_JIT = False
+_arg_parser.add_argument('--jit',action='store_true',help='Enable Numba acceleration (likely to cause slowdown for a single computation!)')
 
 def empty_decorator(f = None, *args, **kw):
     if callable(f):
         return f
     return empty_decorator
 
-if _ENABLE_JIT and numba is not None:
-    njit = functools.partial(numba.njit,cache=True)
-    vectorize = functools.partial(numba.vectorize,cache=True)
+if numba is not None:
+    # register_jitable informs numba that a function may be compiled when
+    # called from jit'ed code, but doesn't jit it by default
+    register_jitable = numba.extending.register_jitable
+
+    # overload informs numba of an *alternate implementation* of a function to
+    # use within jit'ed code -- we use it to provide a jit-able version of polyval
+    overload = numba.extending.overload
+    
+    #njit compiles code -- we use this for our top-level functions
+    njit = numba.njit
+
+    _ENABLE_JIT = True
 else:
+    #if numba is not available, use empty_decorator instead
     njit = empty_decorator
-    vectorize = np.vectorize
+    overload = lambda *a,**k: empty_decorator
+    register_jitable = empty_decorator
+    _ENABLE_JIT = False
+
+
+def enable_jit(en = True):
+    global _ENABLE_JIT
+    if en and numba is None:
+        print('WARNING: JIT unavailable (requires numba and scipy)',file=sys.stderr)
+    #We set the _ENABLE_JIT flag regardless of whether numba is available, just to test that code path!
+    _ENABLE_JIT = en
+
+def disable_jit():
+    enable_jit(False)
 
 def main(args=None, **kwargs):
     """Run sunposition command-line tool.
@@ -112,8 +125,8 @@ def main(args=None, **kwargs):
     csv : bool
         If True, output as comma separated values (time, dt, lat, lon, elev, temp, pressure, az, zen, RA, dec, H)
     """
-    if args is None:
-        args = _args
+    if args is None and not kwargs:
+        args = _arg_parser.parse_args()
     elif isinstance(args,(list,tuple)):
         args = _arg_parser.parse_args(args)
     
@@ -128,9 +141,8 @@ def main(args=None, **kwargs):
         print("Implemented by Samuel Powell, 2016-2025, https://github.com/s-bear/sun-position")
         return 0
 
-    if _ENABLE_JIT and numba is None:
-        print('WARNING: JIT unavailable (requires numba and scipy)',file=sys.stderr)
-
+    enable_jit(args.jit)
+    
     if args.test:
         return test(args)
 
@@ -191,33 +203,7 @@ def arcdist(p0,p1,radians=False):
     else:
         return _arcdist_deg(p0,p1)
 
-def topocentric_sunpos(dt, latitude, longitude, elevation, delta_t=0, radians=False):
-    """Compute the topocentric coordinates of the sun as viewed at the given time and location.
-
-    Parameters
-    ----------
-    dt : array_like of datetime, datetime64, str, or float
-        datetime.datetime, numpy.datetime64, ISO8601 strings, or POSIX timestamps (float or int)
-    latitude, longitude : array_like of float
-        decimal degrees, positive for north of the equator and east of Greenwich
-    elevation : array_like of float
-        meters, relative to the WGS-84 ellipsoid
-    delta_t : array_like of float, optional
-        seconds, default is 0, difference between the earth's rotation time (TT) and universal time (UT)
-    radians : bool, optional
-        return results in radians if True, degrees if False (default)
-
-    Returns
-    -------
-    right_ascension : ndarray, topocentric
-    declination : ndarray, topocentric
-    hour_angle : ndarray, topocentric
-    """
-      
-    jd = julian_day(dt)
-    return _topo_pos(jd, latitude, longitude, elevation, delta_t, radians)
-
-def sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, atmos_refract=None, delta_t=0, radians=False):
+def sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, atmos_refract=None, delta_t=0, radians=False, jit=None):
     """Compute the observed and topocentric coordinates of the sun as viewed at the given time and location.
 
     Parameters
@@ -238,7 +224,9 @@ def sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, 
         seconds, default is 0, difference between the earth's rotation time (TT) and universal time (UT)
     radians : bool, optional
         return results in radians if True, degrees if False (default)
-
+    jit : bool, optional
+        override module jit settings. True to enable Numba acceleration (default if Numba is available), False to disable.
+    
     Returns
     -------
     azimuth_angle : ndarray, measured eastward from north
@@ -254,11 +242,60 @@ def sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, 
         pressure = 1013
     if atmos_refract is None:
         atmos_refract = 0.5667
-    
-    jd = julian_day(dt)
-    return _pos(jd, latitude, longitude, elevation, temperature, pressure, atmos_refract, delta_t, radians)
+    if jit is None:
+        jit = _ENABLE_JIT
 
-def observed_sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, atmos_refract=None, delta_t=0, radians=False):
+    t = to_timestamp(dt)
+
+    if jit:
+        args = np.broadcast_arrays(t, latitude, longitude, elevation, temperature, pressure, atmos_refract, delta_t)
+        sp = _sunpos_vec_jit(*args)
+        sp = tuple(a[()] for a in sp) #unwrap np.array() from scalars
+    else:
+        sp = _sunpos_vec(t, latitude, longitude, elevation, temperature, pressure, atmos_refract, delta_t)
+    if radians:
+        sp = tuple(np.deg2rad(a) for a in sp)
+
+    return sp
+
+def topocentric_sunpos(dt, latitude, longitude, elevation, delta_t=0, radians=False, jit=None):
+    """Compute the topocentric coordinates of the sun as viewed at the given time and location.
+
+    Parameters
+    ----------
+    dt : array_like of datetime, datetime64, str, or float
+        datetime.datetime, numpy.datetime64, ISO8601 strings, or POSIX timestamps (float or int)
+    latitude, longitude : array_like of float
+        decimal degrees, positive for north of the equator and east of Greenwich
+    elevation : array_like of float
+        meters, relative to the WGS-84 ellipsoid
+    delta_t : array_like of float, optional
+        seconds, default is 0, difference between the earth's rotation time (TT) and universal time (UT)
+    radians : bool, optional
+        return results in radians if True, degrees if False (default)
+    jit : bool, optional
+        override module jit settings. True to enable Numba acceleration (default if Numba is available), False to disable.
+
+    Returns
+    -------
+    right_ascension : ndarray, topocentric
+    declination : ndarray, topocentric
+    hour_angle : ndarray, topocentric
+    """
+    if jit is None:
+        jit = _ENABLE_JIT
+    t = to_timestamp(dt)
+    if jit:
+        args = np.broadcast_arrays(t, latitude, longitude, elevation, delta_t)
+        sp = _topo_sunpos_vec_jit(*args)
+        sp = tuple(a[()] for a in sp) #unwrap np.array() from scalars
+    else:
+        sp = _topo_sunpos_vec(t, latitude, longitude, elevation, delta_t)
+    if radians:
+        sp = tuple(np.deg2rad(a) for a in sp)
+    return sp
+
+def observed_sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, atmos_refract=None, delta_t=0, radians=False, jit=None):
     """Compute the observed coordinates of the sun as viewed at the given time and location.
 
     Parameters
@@ -279,13 +316,15 @@ def observed_sunpos(dt, latitude, longitude, elevation, temperature=None, pressu
         seconds, default is 0, difference between the earth's rotation time (TT) and universal time (UT)
     radians : bool, optional
         return results in radians if True, degrees if False (default)
+    jit : bool, optional
+        override module jit settings. True to enable Numba acceleration (default if Numba is available), False to disable.
 
     Returns
     -------
     azimuth_angle : ndarray, measured eastward from north
     zenith_angle : ndarray, measured down from vertical
     """
-    return sunpos(dt, latitude, longitude, elevation, temperature, pressure, atmos_refract, delta_t, radians)[:2]
+    return sunpos(dt, latitude, longitude, elevation, temperature, pressure, atmos_refract, delta_t, radians, jit)[:2]
 
 def test(args):
     test_file = args.test
@@ -417,7 +456,7 @@ def test(args):
 #  int/float POSIX timestamp
 #  ISO8601 string
 
-@njit
+@register_jitable
 def _date_to_rd(year, month, day):
     '''Convert year, month, day to rata die (day number)
     Based on the algorithm in: "Euclidean affine functions and their application to calendar algorithms" C. Neri, L. Schneider (2022) https://doi.org/10.1002/spe.3172
@@ -455,11 +494,11 @@ def _date_to_rd(year, month, day):
     N_U = np.int32(N) - np.int32(K) # uint32_t const N_U = N - K; -- the original casts to int32 at return, we do it here
     return N_U + tod
 
-@njit
+@register_jitable
 def _date_to_posix_time(year, month, day):
     return _date_to_rd(year, month, day)*86400 # rata die (fractional day number) x 86400 seconds per day
 
-@njit
+@register_jitable
 def _rd_to_date(rd):
     '''convert integer rata die (day number) to year, month, day
     "Euclidean affine functions and their application to calendar algorithms" C. Neri, L. Schneider (2022) https://doi.org/10.1002/spe.3172
@@ -512,7 +551,7 @@ def _rd_to_date(rd):
     # return { Y_G, M_G, D_G };
     return (Y_G, M_G, D_G + tod)
 
-@njit
+@register_jitable
 def _posix_time_to_date(t):
     '''POSIX timestamp to (year, month, day)'''
     return _rd_to_date(t/86400) # (timestamp in seconds)/86400 -> rata die (fractional day number)
@@ -573,7 +612,7 @@ def _posix_time_to_string(t):
 #we can't use numba to accelerate _string_to_posix_time, so use np.vectorize here
 _string_to_posix_time_v = np.vectorize(_string_to_posix_time)
 
-@vectorize(cache=_ENABLE_JIT)
+@register_jitable
 def _julian_day(t):
     """Calculate the Julian Day from posix timestamp (seconds since epoch)"""
     year, month, day = _posix_time_to_date(t)
@@ -588,25 +627,39 @@ def _julian_day(t):
     jd = int(365.25 * (year + 4716)) + int(30.6001 * (month + 1)) + day + b - 1524.5
     return jd
 
+_julian_day_vec = np.vectorize(_julian_day)
+
+@njit
+def _julian_day_vec_jit(t):
+    ts = np.asarray(t)
+    ts_flat = ts.flat
+    n = len(ts_flat)
+    jds = np.empty(n, dtype=np.float64)
+    for i, t in enumerate(ts_flat):
+        jds[i] = _julian_day(t)
+    jds = jds.reshape(ts.shape)
+    return jds[()]
+
 #we can't use numba to accelerate _get_timestamp, so use np.vectorize here
 @np.vectorize
 def _get_timestamp(dt):
     '''get the timestamp from a datetime.datetime object'''
     return dt.timestamp()
 
-def julian_day(dt):
-    """Convert timestamps from various formats to Julian days
-
+def to_timestamp(dt):
+    '''Convert various date/time formats to POSIX timestamps
+    
     Parameters
     ----------
-    dt : array_like
-        datetime.datetime, numpy.datetime64, ISO8601 strings, or POSIX timestamps (float or int)
-
+    dt : array_like of datetime.datetime, numpy.datetime64, ISO8601 strings
+        date/times to convert to POSIX timestamps. 
+    
     Returns
     -------
-    jd : ndarray
-        datetimes converted to fractional Julian days
-    """
+    t : ndarray
+        dt converted to POSIX timestamps, or if dt is not one of the listed formats
+        it is returned unchanged.
+    '''
     dt = np.asarray(dt)
 
     if np.issubdtype(dt.dtype, str):
@@ -616,26 +669,49 @@ def julian_day(dt):
     elif np.issubdtype(dt.dtype, np.datetime64):
         t = dt.astype('datetime64[us]').astype(np.int64)/1e6
     else:
-        t = dt #assume it's a posix timestamp
-    # use [()] to "unwrap" scalar values out of np.array
-    return _julian_day(t)[()]
+        t = dt
+    return t[()] #unwrap scalar values out of np.array
 
-@njit
+def julian_day(dt, jit=None):
+    """Convert timestamps from various formats to Julian days
+
+    Parameters
+    ----------
+    dt : array_like
+        datetime.datetime, numpy.datetime64, ISO8601 strings, or POSIX timestamps (float or int)
+    jit : bool or None
+        override module jit settings, to True/False to enable/disable numba acceleration
+    
+    Returns
+    -------
+    jd : ndarray
+        datetimes converted to fractional Julian days
+    """
+
+    t = to_timestamp(dt)
+    if jit is None: jit = _ENABLE_JIT
+    if jit:
+        jd = _julian_day_vec_jit(t)
+    else:
+        jd = _julian_day_vec(t)
+    return jd[()] # use [()] to "unwrap" scalar values out of np.array
+
+@register_jitable
 def _julian_ephemeris_day(jd, deltat):
     """Calculate the Julian Ephemeris Day from the Julian Day and delta-time = (terrestrial time - universal time) in seconds"""
     return jd + deltat / 86400.0
 
-@njit
+@register_jitable
 def _julian_century(jd):
     """Caluclate the Julian Century from Julian Day or Julian Ephemeris Day"""
     return (jd - 2451545.0) / 36525.0
 
-@njit
+@register_jitable
 def _julian_millennium(jc):
     """Calculate the Julian Millennium from Julian Ephemeris Century"""
     return jc / 10.0
 
-@njit
+@register_jitable
 def _cos_sum(x, coeffs):
     y = np.zeros(len(coeffs))
     for i, abc in enumerate(coeffs):
@@ -709,7 +785,7 @@ _EHL = (
     (25.0, 3.16, 4690.48)])
 )
 
-@njit
+@register_jitable
 def _heliocentric_longitude(jme):
     """Compute the Earth Heliocentric Longitude (L) in degrees given the Julian Ephemeris Millennium"""
     #L5, ..., L0
@@ -727,7 +803,7 @@ _EHB = (
     (44.0, 3.7, 2352.87), (32.0, 4.0, 1577.34)])
 )
 
-@njit
+@register_jitable
 def _heliocentric_latitude(jme):
     """Compute the Earth Heliocentric Latitude (B) in degrees given the Julian Ephemeris Millennium"""
     Bi = _cos_sum(jme, _EHB)
@@ -766,7 +842,7 @@ _EHR = (
     (26.0, 4.59, 10447.39)])
 )
 
-@njit
+@register_jitable
 def _heliocentric_radius(jme):
     """Compute the Earth Heliocentric Radius (R) in astronimical units given the Julian Ephemeris Millennium"""
     
@@ -774,14 +850,14 @@ def _heliocentric_radius(jme):
     R = np.polyval(Ri, jme) / 1e8
     return R
 
-@njit
+@register_jitable
 def _heliocentric_position(jme):
     """Compute the Earth Heliocentric Longitude, Latitude, and Radius given the Julian Ephemeris Millennium
         Returns (L, B, R) where L = longitude in degrees, B = latitude in degrees, and R = radius in astronimical units
     """
     return _heliocentric_longitude(jme), _heliocentric_latitude(jme), _heliocentric_radius(jme)
 
-@njit
+@register_jitable
 def _geocentric_position(helio_pos):
     """Compute the geocentric latitude (Theta) and longitude (beta) (in degrees) of the sun given the earth's heliocentric position (L, B, R)"""
     L,B,R = helio_pos
@@ -789,7 +865,7 @@ def _geocentric_position(helio_pos):
     b = -B
     return (th, b)
 
-@njit
+@register_jitable
 def _ecliptic_obliquity(jme, delta_epsilon):
     """Calculate the true obliquity of the ecliptic (epsilon, in degrees) given the Julian Ephemeris Millennium and the obliquity"""
     u = jme/10
@@ -851,7 +927,7 @@ _NLO_CD = np.array([(92025.0,   8.9), (5736.0,    -3.1), (977.0, -0.5), (-895.0,
         (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), (0.0, 0.0),
         (0.0, 0.0), (0.0, 0.0), (0.0, 0.0)])
 
-@njit
+@register_jitable
 def _nutation_obliquity(jce):
     """compute the nutation in longitude (delta_psi) and the true obliquity (epsilon) given the Julian Ephemeris Century"""
     #mean elongation of the moon from the sun, in radians:
@@ -883,12 +959,12 @@ def _nutation_obliquity(jce):
 
     return dp, e
 
-@njit
+@register_jitable
 def _abberation_correction(R):
     """Calculate the abberation correction (delta_tau, in degrees) given the Earth Heliocentric Radius (in AU)"""
     return -20.4898/(3600*R)
 
-@njit
+@register_jitable
 def _sun_longitude(helio_pos, delta_psi):
     """Calculate the apparent sun longitude (lambda, in degrees) and geocentric latitude (beta, in degrees) given the earth heliocentric position and delta_psi"""
     L,B,R = helio_pos
@@ -897,7 +973,7 @@ def _sun_longitude(helio_pos, delta_psi):
     ll = theta + delta_psi + _abberation_correction(R)
     return ll, beta
 
-@njit
+@register_jitable
 def _greenwich_sidereal_time(jd, delta_psi, epsilon):
     """Calculate the apparent Greenwich sidereal time (v, in degrees) given the Julian Day"""
     jc = _julian_century(jd)
@@ -906,7 +982,7 @@ def _greenwich_sidereal_time(jd, delta_psi, epsilon):
     v = v0 + delta_psi*np.cos(np.deg2rad(epsilon))
     return v
 
-@njit
+@register_jitable
 def _sun_ra_decl(llambda, epsilon, beta):
     """Calculate the sun's geocentric right ascension (alpha, in degrees) and declination (delta, in degrees)"""
     l = np.deg2rad(llambda)
@@ -918,7 +994,7 @@ def _sun_ra_decl(llambda, epsilon, beta):
     delta = np.rad2deg(delta)
     return alpha, delta
 
-@njit
+@register_jitable
 def _sun_topo_ra_decl_hour(latitude, longitude, elevation, jd, delta_t = 0):
     """Calculate the sun's topocentric right ascension (alpha'), declination (delta'), and hour angle (H')"""
     
@@ -960,7 +1036,7 @@ def _sun_topo_ra_decl_hour(latitude, longitude, elevation, jd, delta_t = 0):
 
     return alpha_prime, delta_prime, H_prime
 
-@njit
+@register_jitable
 def _sun_topo_azimuth_zenith(latitude, delta_prime, H_prime, temperature=14.6, pressure=1013, atmos_refract=0.5667):
     """Compute the sun's topocentric azimuth and zenith angles
     azimuth is measured eastward from north, zenith from vertical
@@ -984,7 +1060,7 @@ def _sun_topo_azimuth_zenith(latitude, delta_prime, H_prime, temperature=14.6, p
     Phi = (gamma + 180) % 360 #azimuth from north
     return Phi, zenith, delta_e
 
-@njit
+@register_jitable
 def _norm_lat_lon(lat,lon):
     if lat < -90 or lat > 90:
         #convert to cartesian and back
@@ -998,30 +1074,70 @@ def _norm_lat_lon(lat,lon):
         lon = lon % 360
     return lat,lon
 
-#we use np.vectorize because numba's vectorize can't handle tuple return
-@np.vectorize
-@njit
-def _topo_pos(jd,lat,lon,elev,dt,radians):
+@register_jitable
+def _topo_sunpos(t, lat, lon, elev, dt):
     """compute RA,dec,H, all in degrees"""
+    jd = _julian_day(t)
     lat,lon = _norm_lat_lon(lat,lon)
     RA, dec, H = _sun_topo_ra_decl_hour(lat, lon, elev, jd, dt)
-    if radians:
-        return np.deg2rad(RA), np.deg2rad(dec), np.deg2rad(H)
-    else:
-        return RA, dec, H
+    return RA, dec, H
 
-#we use np.vectorize because numba's vectorize can't handle tuple return
-@np.vectorize
+_topo_sunpos_vec = np.vectorize(_topo_sunpos)
+
 @njit
-def _pos(jd,lat,lon,elev,temp,press,atmos_refract,dt,radians):
+def _topo_sunpos_vec_jit(t, lat, lon, elev, dt):
+    '''Compute RA, dec, H, all in degrees; vectorized for use with Numba
+    Arguments must be broadcast before calling: Numba's broadcast does not match Numpy's with scalar arguments
+    Return values must be unwrapped after calling because Numba can't handle dynamic return types
+    '''
+    #broadcast
+    out_shape = t.shape
+    #flatten
+    args_flat = t.flat, lat.flat, lon.flat, elev.flat, dt.flat
+    n = len(args_flat[0])
+    #allocate outputs as flat arrays
+    RA, dec, H = np.empty(n), np.empty(n), np.empty(n)
+    #do calculations over flattened inputs
+    for i, arg in enumerate(zip(*args_flat)):
+        RA[i], dec[i], H[i] = _topo_sunpos(*arg)
+    #reshape to final dims
+    RA, dec, H = RA.reshape(out_shape), dec.reshape(out_shape), H.reshape(out_shape)
+    return RA, dec, H
+
+
+@register_jitable
+def _sunpos(t, lat, lon, elev, temp, press, atmos_refract, dt):
     """Compute azimuth,zenith,RA,dec,H"""
+    jd = _julian_day(t)
     lat,lon = _norm_lat_lon(lat,lon)
     RA, dec, H = _sun_topo_ra_decl_hour(lat, lon, elev, jd, dt)
     azimuth, zenith, delta_e = _sun_topo_azimuth_zenith(lat, dec, H, temp, press, atmos_refract)
-    if radians:
-        return np.deg2rad(azimuth), np.deg2rad(zenith), np.deg2rad(RA), np.deg2rad(dec), np.deg2rad(H)
-    else:
-        return azimuth, zenith, RA, dec, H
+    return azimuth, zenith, RA, dec, H
+
+_sunpos_vec = np.vectorize(_sunpos)
+
+@njit
+def _sunpos_vec_jit(t, lat, lon, elev, temp, press, atmos_refract, dt):
+    '''Compute azimuth,zenith,RA,ec,H; vectorized for use with Numba
+    Note that arguments must be broadcast in advance as numba's broadcast does not match numpy's with scalar arguments
+    Return values must be unwrapped after calling because Numba can't handle dynamic return types
+    '''
+    out_shape = t.shape #final output shape
+    
+    #flatten inputs
+    args_flat = t.flat, lat.flat, lon.flat, elev.flat, temp.flat, press.flat, atmos_refract.flat, dt.flat
+    n = len(args_flat[0])
+    #allocate outputs as flat arrays
+    azimuth, zenith = np.empty(n), np.empty(n)
+    RA, dec, H = np.empty(n), np.empty(n), np.empty(n)
+    #do calculations over flattened inputs
+    for i, arg in enumerate(zip(*args_flat)):
+        t, lat, lon, elev, temp, press, atmos_refract, dt = arg
+        azimuth[i], zenith[i], RA[i], dec[i], H[i] = _sunpos(t, lat, lon, elev, temp, press, atmos_refract, dt)
+    #reshape outputs to final dimensions
+    azimuth, zenith = azimuth.reshape(out_shape), zenith.reshape(out_shape)
+    RA, dec, H = RA.reshape(out_shape), dec.reshape(out_shape), H.reshape(out_shape)
+    return azimuth, zenith, RA, dec, H
 
 if __name__ == '__main__':
     sys.exit(main())
