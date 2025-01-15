@@ -399,19 +399,6 @@ def test(args):
     for n, e in zip(err_names, rms_err):
         print('{}: {}'.format(n, e))
 
-#define the polval that we will use if jit is enabled
-@njit
-def _polyval(p, x):
-    y = 0.0
-    for i,v in enumerate(p):
-        y = y*x + v
-    return y
-
-if not _ENABLE_JIT:
-    #use numpy's polyval if not using jit
-    _polyval = np.polyval
-
-
 ## Dates and times
 # this application has unusual date/time requirements that are not supported by
 # Python's time or datetime libraries. Specifically:
@@ -655,6 +642,16 @@ def _cos_sum(x, coeffs):
             y[i] += a*np.cos(b + c*x)
     return y
 
+#implement np.polyval for numba using overload
+@overload(np.polyval)
+def _polyval_jit(p, x):
+    def _polyval_impl(p, x):
+        y = 0.0
+        for v in p:
+            y = y*x + v
+        return y
+    return _polyval_impl
+
 # Earth Heliocentric Longitude coefficients (L0, L1, L2, L3, L4, and L5 in paper)
 _EHL = (
     #L5:
@@ -716,7 +713,7 @@ def _heliocentric_longitude(jme):
     """Compute the Earth Heliocentric Longitude (L) in degrees given the Julian Ephemeris Millennium"""
     #L5, ..., L0
     Li = _cos_sum(jme, _EHL)
-    L = _polyval(Li, jme) / 1e8
+    L = np.polyval(Li, jme) / 1e8
     L = np.rad2deg(L) % 360
     return L
 
@@ -733,7 +730,7 @@ _EHB = (
 def _heliocentric_latitude(jme):
     """Compute the Earth Heliocentric Latitude (B) in degrees given the Julian Ephemeris Millennium"""
     Bi = _cos_sum(jme, _EHB)
-    B = _polyval(Bi, jme) / 1e8
+    B = np.polyval(Bi, jme) / 1e8
     B = np.rad2deg(B) % 360
     return B
 
@@ -773,7 +770,7 @@ def _heliocentric_radius(jme):
     """Compute the Earth Heliocentric Radius (R) in astronimical units given the Julian Ephemeris Millennium"""
     
     Ri = _cos_sum(jme, _EHR)
-    R = _polyval(Ri, jme) / 1e8
+    R = np.polyval(Ri, jme) / 1e8
     return R
 
 @njit
@@ -795,7 +792,8 @@ def _geocentric_position(helio_pos):
 def _ecliptic_obliquity(jme, delta_epsilon):
     """Calculate the true obliquity of the ecliptic (epsilon, in degrees) given the Julian Ephemeris Millennium and the obliquity"""
     u = jme/10
-    e0 = _polyval((2.45, 5.79, 27.87, 7.12, -39.05, -249.67, -51.38, 1999.25, -1.55, -4680.93, 84381.448), u)
+    eq24_coeffs = np.array([2.45, 5.79, 27.87, 7.12, -39.05, -249.67, -51.38, 1999.25, -1.55, -4680.93, 84381.448])
+    e0 = np.polyval(eq24_coeffs, u)
     e = e0/3600.0 + delta_epsilon
     return e
 
@@ -857,16 +855,21 @@ def _nutation_obliquity(jce):
     """compute the nutation in longitude (delta_psi) and the true obliquity (epsilon) given the Julian Ephemeris Century"""
     #mean elongation of the moon from the sun, in radians:
     #x0 = 297.85036 + 445267.111480*jce - 0.0019142*(jce**2) + (jce**3)/189474
-    x0 = np.deg2rad(_polyval((1./189474, -0.0019142, 445267.111480, 297.85036),jce))
+    eq15_coeffs = np.array([1./189474, -0.0019142, 445267.111480, 297.85036])
+    x0 = np.deg2rad(np.polyval(eq15_coeffs,jce))
     #mean anomaly of the sun (Earth), in radians:
-    x1 = np.deg2rad(_polyval((-1/3e5, -0.0001603, 35999.050340, 357.52772), jce))
+    eq16_coeffs = np.array([-1/3e5, -0.0001603, 35999.050340, 357.52772])
+    x1 = np.deg2rad(np.polyval(eq16_coeffs, jce))
     #mean anomaly of the moon, in radians:
-    x2 = np.deg2rad(_polyval((1./56250, 0.0086972, 477198.867398, 134.96298), jce))
+    eq17_coeffs = np.array([1./56250, 0.0086972, 477198.867398, 134.96298])
+    x2 = np.deg2rad(np.polyval(eq17_coeffs, jce))
     #moon's argument of latitude, in radians:
-    x3 = np.deg2rad(_polyval((1./327270, -0.0036825, 483202.017538, 93.27191), jce))
+    eq18_coeffs = np.array([1./327270, -0.0036825, 483202.017538, 93.27191])
+    x3 = np.deg2rad(np.polyval(eq18_coeffs, jce))
     #Longitude of the ascending node of the moon's mean orbit on the ecliptic
     # measured from the mean equinox of the date, in radians
-    x4 = np.deg2rad(_polyval((1./45e4, 0.0020708, -1934.136261, 125.04452), jce))
+    eq19_coeffs = np.array([1./45e4, 0.0020708, -1934.136261, 125.04452])
+    x4 = np.deg2rad(np.polyval(eq19_coeffs, jce))
 
     x = np.array([x0, x1, x2, x3, x4])
 
