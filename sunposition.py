@@ -167,17 +167,18 @@ def main(args=None, **kwargs):
 
     return 0
 
-@njit
 def _arcdist(p0,p1):
     a0,z0 = p0[...,0], p0[...,1]
     a1,z1 = p1[...,0], p1[...,1]
     return np.arccos(np.cos(z0)*np.cos(z1)+np.cos(a0-a1)*np.sin(z0)*np.sin(z1))
 
-@njit
 def _arcdist_deg(p0,p1):
     return np.rad2deg(_arcdist(np.deg2rad(p0),np.deg2rad(p1)))
 
-def arcdist(p0,p1,radians=False):
+_arcdist_jit = njit(_arcdist)
+_arcdist_deg_jit = njit(_arcdist_deg)
+
+def arcdist(p0,p1,radians=False, jit=None):
     """Angular distance between azimuth,zenith pairs
     
     Parameters
@@ -187,6 +188,8 @@ def arcdist(p0,p1,radians=False):
         p[...,0] = azimuth angles, p[...,1] = zenith angles
     radians : boolean (default False)
         If False, angles are in degrees, otherwise in radians
+    jit : bool, optional
+        override module jit settings. True to enable Numba acceleration (default if Numba is available), False to disable.
 
     Returns
     -------
@@ -199,9 +202,11 @@ def arcdist(p0,p1,radians=False):
     #then arccos to return to angle, and simplify everything assuming real inputs
     p0,p1 = np.broadcast_arrays(p0, p1)
     if radians:
-        return _arcdist(p0,p1)
+        if jit: return _arcdist_jit(p0,p1)
+        else: return _arcdist(p0,p1)
     else:
-        return _arcdist_deg(p0,p1)
+        if jit: return _arcdist_deg_jit(p0,p1)
+        else: return _arcdist_deg(p0,p1)
 
 def sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, atmos_refract=None, delta_t=0, radians=False, jit=None):
     """Compute the observed and topocentric coordinates of the sun as viewed at the given time and location.
