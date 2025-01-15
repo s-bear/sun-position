@@ -93,14 +93,15 @@ import matplotlib.pyplot as plt
 #          sunposition.enable_jit(False)
 #    3. Pass `jit=False` as a keyword argument to the function
 import sunposition
-import time
 
 #evaluate on a 2 degree grid
 lon  = np.linspace(-180,180,181)
 lat = np.linspace(-90,90,91)
 LON, LAT = np.meshgrid(lon,lat)
-#at the current time
-now = sunposition.to_timestamp('now') #ISO8601 date-time strings work too
+# to_timestamp(s) converts a string to a POSIX-style timestamp (seconds since epoch)
+# s may be 'now', which returns the current time using time.time()
+#   or an ISO-8601 formatted date & time, e.g. '2024-04-08T11:09:34-07:00' 
+now = sunposition.to_timestamp('now')
 az,zen = sunposition.sunpos(now,LAT,LON,0)[:2] #discard RA, dec, H
 #convert zenith to elevation
 elev = 90 - zen
