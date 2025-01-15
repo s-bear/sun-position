@@ -65,7 +65,7 @@ if numba is not None:
     #njit compiles code -- we use this for our top-level functions
     njit = numba.njit
 
-    _ENABLE_JIT = True
+    _ENABLE_JIT = not numba.config.DISABLE_JIT and not os.environ.get('NUMBA_DISABLE_JIT',False)
 else:
     #if numba is not available, use empty_decorator instead
     njit = empty_decorator
