@@ -27,8 +27,7 @@ $ pip install sunposition
 
 ```
 $ sunposition --help
-usage: sunposition [-h] [--test TEST] [--version] [--citation] [-t TIME] [-lat LATITUDE] [-lon LONGITUDE]
-                   [-e ELEVATION] [-T TEMPERATURE] [-p PRESSURE] [-a ATMOS_REFRACT] [-dt DT] [-r] [--csv] [--no-jit] [--jit]
+usage: sunposition [-h] [--test TEST] [--version] [--citation] [-t TIME] [-lat LATITUDE] [-lon LONGITUDE] [-e ELEVATION] [-T TEMPERATURE] [-p PRESSURE] [-a ATMOS_REFRACT] [-dt DT] [-r] [--csv] [--jit]
 
 Compute sun position parameters given the time and location
 
@@ -37,7 +36,7 @@ options:
   --test TEST           Test against output from https://midcdmz.nrel.gov/solpos/spa.html
   --version             show program's version number and exit
   --citation            Print citation information
-  -t TIME, --time TIME  "now" or date and time (UTC) in "YYYY-MM-DD hh:mm:ss.ssssss" format or a (UTC) POSIX timestamp
+  -t TIME, --time TIME  "now" or date and time in ISO8601 format or a (UTC) POSIX timestamp
   -lat LATITUDE, --latitude LATITUDE
                         observer latitude, in decimal degrees, positive for north
   -lon LONGITUDE, --longitude LONGITUDE
@@ -53,24 +52,23 @@ options:
   -dt DT                difference between earth's rotation time (TT) and universal time (UT1)
   -r, --radians         Output in radians instead of degrees
   --csv                 Comma separated values (time,dt,lat,lon,elev,temp,pressure,az,zen,RA,dec,H)
-  --no-jit              Disable Numba acceleration (default, if Numba is not available)
-  --jit                 Enable Numba acceleration (default, if Numba is available)
+  --jit                 Enable Numba acceleration (likely to cause slowdown for a single computation!)
 
 $ sunposition
-Computing sun position at T = 2025-01-08T05:36:30.836738+00:00 + 0.0 s
+Computing sun position at T = 2025-01-15T06:26:55.969Z + 0.0 s
 Lat, Lon, Elev = 51.48 deg, 0.0 deg, 0 m
 T, P = 14.6 C, 1013.0 mbar
 Results:
-Azimuth, zenith = 98.68808549688168 deg, 111.80137110880389 deg
-RA, dec, H = 289.70290250817914 deg, -22.20483885012405 deg, -97.5449218180503 deg
+Azimuth, zenith = 106.729483 deg, 103.700963 deg
+RA, dec, H = 297.315158 deg, -21.068459 deg, -85.618177 deg
 
 $ sunposition -t "1953-05-29 05:45:00" -lat 27.9881 -lon 86.9253 -e 8848
 Computing sun position at T = 1953-05-29T05:45:00.000Z + 0.0 s
 Lat, Lon, Elev = 27.9881 deg, 86.9253 deg, 8848.0 m
 T, P = 14.6 C, 1013.0 mbar
 Results:
-Azimuth, zenith = 137.7367679094362 deg, 8.481270000945017 deg
-RA, dec, H = 65.76050110268717 deg, 21.576416571716344 deg, 353.87517188444895 deg
+Azimuth, zenith = 137.736768 deg, 8.481270 deg
+RA, dec, H = 65.760501 deg, 21.576417 deg, 353.875172 deg
 ```
 
 An example test file is provided at https://raw.githubusercontent.com/s-bear/sun-position/master/sunposition_test.txt
@@ -80,14 +78,21 @@ An example test file is provided at https://raw.githubusercontent.com/s-bear/sun
 ```python
 import numpy as np
 import matplotlib.pyplot as plt
-#sunposition will use numba.jit if available, which may negatively
-#impact performance if few positions are being computed.
-#To disable jit, before importing sunposition, either set 
-#the environment variable NUMBA_DISABLE_JIT to 1 or
-#set numba.config.DISABLE_JIT = False
-# e.g. import os; os.environ['NUMBA_DISABLE_JIT'] = 1
-# or import numba; numba.config.DISABLE_JIT = True
-from sunposition import sunpos
+# When imported as a module, sunposition will use numba.jit if available
+# This may negatively impact performance if few positions are being computed
+# For a rough guideline, on the author's machine:
+#    jit:    5.5 seconds + 35 microseconds per computation
+#    no-jit  1.4 milliseconds per computation
+#    break-even: ~4000 computations
+# There are several methods to disable jit:
+#    1. If numba.config.DISABLE_JIT or the environment variable NUMBA_DISABLE_JIT
+#       are set *before* sunposition is imported, jit will be disabled by default.
+#    2. After sunposition is imported, use
+#          sunposition.disable_jit()
+#       or
+#          sunposition.enable_jit(False)
+#    3. Pass `jit=False` as a keyword argument to the function
+import sunposition
 import time
 
 #evaluate on a 2 degree grid
@@ -95,8 +100,8 @@ lon  = np.linspace(-180,180,181)
 lat = np.linspace(-90,90,91)
 LON, LAT = np.meshgrid(lon,lat)
 #at the current time
-now = time.time()
-az,zen = sunpos(now,LAT,LON,0)[:2] #discard RA, dec, H
+now = sunposition.to_timestamp('now') #ISO8601 date-time strings work too
+az,zen = sunposition.sunpos(now,LAT,LON,0)[:2] #discard RA, dec, H
 #convert zenith to elevation
 elev = 90 - zen
 #convert azimuth to vectors
