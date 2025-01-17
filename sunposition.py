@@ -255,7 +255,7 @@ def sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, 
     if jit is None:
         jit = _ENABLE_JIT
 
-    t = to_timestamp(dt)
+    t = datetime_to_timestamp(dt)
 
     if jit:
         args = np.broadcast_arrays(t, latitude, longitude, elevation, temperature, pressure, atmos_refract, delta_t)
@@ -295,7 +295,7 @@ def topocentric_sunpos(dt, latitude, longitude, elevation, delta_t=0, radians=Fa
     """
     if jit is None:
         jit = _ENABLE_JIT
-    t = to_timestamp(dt)
+    t = datetime_to_timestamp(dt)
     if jit:
         args = np.broadcast_arrays(t, latitude, longitude, elevation, delta_t)
         for a in args: a.flags.writeable = False
@@ -552,7 +552,7 @@ def _rd_to_date(rd):
 
     # Map. (Notice the year correction, including type change.)
     J   = (N_Y >= 306) # uint32_t const J   = N_Y >= 306;
-    Y_G = np.int32(Y - L + J) # int32_t  const Y_G = (Y - L) + J;
+    Y_G = np.int32(Y) - np.int32(L) + np.int32(J) # int32_t  const Y_G = (Y - L) + J;
     # uint32_t const M_G = J ? M - 12 : M;
     if J:
         M_G = np.uint32(M - 12)
@@ -567,6 +567,17 @@ def _rd_to_date(rd):
 def _posix_time_to_date(t):
     '''POSIX timestamp to (year, month, day)'''
     return _rd_to_date(t/86400) # (timestamp in seconds)/86400 -> rata die (fractional day number)
+
+@register_jitable
+def _posix_time_to_datetime(t):
+    '''POSIX timestamp to (year, month, day, hour, minute, second, milliseconds)'''
+    year, month, fday = _posix_time_to_date(t)
+    day = int(fday)
+    ms = round((fday - day)*86400000) #milliseconds into the day
+    hour, ms = divmod(ms, 3600000) #hour, ms into the hour
+    minute, ms = divmod(ms, 60000) #minute, ms into the minute
+    sec, ms = divmod(ms, 1000) #second, millisecond
+    return (year, month, day, hour, minute, sec, ms)
 
 _iso8601_re = re.compile(r'([+-]?\d{1,4})-?([01]\d)-?([0-3]\d)[T ]([012]\d):?([0-6]\d):?([0-6]\d(?:\.\d+)?)?(?:Z|(?:([+-]\d{2})(?::?(\d{2}))?))?')
 def _string_to_posix_time(s):
@@ -600,29 +611,78 @@ def _string_to_posix_time(s):
     rd = _date_to_rd(year, month, day) #to rata die
     #validate the date using _rd_to_date(_date_to_rd()) round trip
     if _rd_to_date(rd) != (year, month, day):
-        raise ValueError('Invalid date')
-    if tod > 1:
-        raise ValueError('Invalid time')
+        raise ValueError(f'Invalid date: "{year:04}-{month:02}-{day:02}"')
+    if tod >= 1:
+        raise ValueError(f'Invalid time: "{hour:02}:{minute:02}:{second:09.6f}"')
     # UTC offsets vary from -12:00 (US Minor Outlying Islands) to +14:00 (Kiribati)
     if tz < -12 or tz > 14:
-        raise ValueError('Invalid timezone')
+        raise ValueError(f'Invalid timezone: "{tz_hour:02}:{tz_minute:02}"')
     #apply tod and tz to rd & multiply by seconds per day
     return 86400*(rd + tod - tz/24)
 
+_string_to_posix_time_vec = np.vectorize(_string_to_posix_time)
 
 def _posix_time_to_string(t):
     '''Format a POSIX timestamp as ISO8601 with millisecond precision'''
     #we need our own because datetime.datetime.fromtimestamp() doesn't support dates before epoch
-    year, month, fday = _posix_time_to_date(t)
-    day = int(fday)
-    ms = round((fday - day)*86400000) #milliseconds into the day
-    hour, ms = divmod(ms, 3600000) #hour, ms into the hour
-    minute, ms = divmod(ms, 60000) #minute, ms into the minute
-    sec, ms = divmod(ms, 1000) #second, millisecond
+    year, month, day, hour, minute, sec, ms = _posix_time_to_datetime(t)
     return f'{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{sec:02}.{ms:03}Z'
+
+_posix_time_to_string_vec = np.vectorize(_posix_time_to_string)
+
+#we can't use numba to accelerate _get_timestamp, so use np.vectorize here
+@np.vectorize
+def _get_timestamp(dt):
+    '''get the timestamp from a datetime.datetime object'''
+    return dt.timestamp()
+
+def datetime_to_timestamp(dt):
+    '''Convert various date/time formats to POSIX timestamps.
+
+    dt is a datetime.datetime: uses dt.timestamp(), which uses the
+        local timezone by default. To avoid timezone errors, use timezone aware
+        datetime functionality when possible.
     
-#we can't use numba to accelerate _string_to_posix_time, so use np.vectorize here
-_string_to_posix_time_v = np.vectorize(_string_to_posix_time)
+    dt is a numpy.datetime64: converts to POSIX timestamps with 
+        microsecond precision: dt.astype('datetime64[us]').astype(np.int64)/1e6
+    
+    dt is a str: accepts 3 formats of string:
+        'now' : uses time.time() to return the current timestamp
+        floating point : parsed using float(dt)
+        ISO 8601 : a standard ISO date-time string, with some variation accepted
+                   eg. '2024-04-08T11:09:34-07:00', '2024-04-08 11:09:34-07:00',
+                       '20240408 110934-07', '20240408T180934.000Z', all 
+                       produce the same timestamp
+    
+    Parameters
+    ----------
+    dt : array_like of datetime.datetime, numpy.datetime64, ISO 8601 strings
+        date/times to convert to POSIX timestamps. 
+    
+    Returns
+    -------
+    t : ndarray
+        dt converted to POSIX timestamps, or if dt is not one of the listed formats
+        it is returned unchanged.
+    '''
+    dt = np.asarray(dt)
+    # [()] unwrap scalar values out of np.array
+    if np.issubdtype(dt.dtype, str):
+        t = _string_to_posix_time_vec(dt)[()]
+    elif np.issubdtype(dt.dtype, datetime.datetime):
+        t = _get_timestamp(dt)[()]
+    elif np.issubdtype(dt.dtype, np.datetime64):
+        t = (dt.astype('datetime64[us]').astype(np.int64)/1e6)[()]
+    else:
+        t = dt
+    return t 
+
+def timestamp_to_iso8601(t):
+    '''Convert POSIX timestamps to ISO8601 timestamp strings'''
+    t = np.asarray(t)
+    s = _posix_time_to_string_vec(t)
+    if s.shape == (): return str(s)
+    return s
 
 @register_jitable
 def _julian_day(t):
@@ -652,53 +712,6 @@ def _julian_day_vec_jit(t):
     jds = jds.reshape(ts.shape)
     return jds[()]
 
-#we can't use numba to accelerate _get_timestamp, so use np.vectorize here
-@np.vectorize
-def _get_timestamp(dt):
-    '''get the timestamp from a datetime.datetime object'''
-    return dt.timestamp()
-
-def to_timestamp(dt):
-    '''Convert various date/time formats to POSIX timestamps.
-
-    to_timestamp(dt : datetime.datetime) uses dt.timestamp(), which uses the
-        local timezone by default. To avoid timezone errors, use timezone aware
-        datetime functionality when possible.
-    
-    to_timestamp(dt : numpy.datetime64) converts to POSIX timestamps with 
-        microsecond precision: dt.astype('datetime64[us]').astype(np.int64)/1e6
-    
-    to_timestamp(dt : str) accepts 3 formats of string:
-        'now' : uses time.time() to return the current timestamp
-        floating point : parsed using float(dt)
-        ISO 8601 : a standard ISO date-time string, with some variation accepted
-                   eg. '2024-04-08T11:09:34-07:00', '2024-04-08 11:09:34-07:00',
-                       '20240408 110934-07', '20240408T180934.000Z', all 
-                       produce the same timestamp
-    
-    Parameters
-    ----------
-    dt : array_like of datetime.datetime, numpy.datetime64, ISO 8601 strings
-        date/times to convert to POSIX timestamps. 
-    
-    Returns
-    -------
-    t : ndarray
-        dt converted to POSIX timestamps, or if dt is not one of the listed formats
-        it is returned unchanged.
-    '''
-    dt = np.asarray(dt)
-
-    if np.issubdtype(dt.dtype, str):
-        t = _string_to_posix_time_v(dt)
-    elif np.issubdtype(dt.dtype, datetime.datetime):
-        t = _get_timestamp(dt)
-    elif np.issubdtype(dt.dtype, np.datetime64):
-        t = dt.astype('datetime64[us]').astype(np.int64)/1e6
-    else:
-        t = dt
-    return t[()] #unwrap scalar values out of np.array
-
 def julian_day(dt, jit=None):
     """Convert timestamps from various formats to Julian days
 
@@ -715,7 +728,7 @@ def julian_day(dt, jit=None):
         datetimes converted to fractional Julian days
     """
 
-    t = to_timestamp(dt)
+    t = datetime_to_timestamp(dt)
     if jit is None: jit = _ENABLE_JIT
     if jit:
         jd = _julian_day_vec_jit(t)
