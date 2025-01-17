@@ -47,7 +47,7 @@ _arg_parser.add_argument('-lon','--longitude',type=float,default=0.0,help='obser
 _arg_parser.add_argument('-e','--elevation',type=float,default=0,help='observer elevation, in meters')
 _arg_parser.add_argument('-T','--temperature',type=float,default=14.6,help='temperature, in degrees celcius')
 _arg_parser.add_argument('-p','--pressure',type=float,default=1013.0,help='atmospheric pressure, in millibar')
-_arg_parser.add_argument('-a','--atmos_refract',type=float,default=0.5667,help='atmospheric refraction at sunrise and sunset, in degrees')
+_arg_parser.add_argument('-a','--atmos_refract',type=float,default=None,help='Atmospheric refraction at sunrise and sunset, in degrees. None to compute automatically, spa.c uses 0.5667')
 _arg_parser.add_argument('-dt',type=float,default=0.0,help='difference between earth\'s rotation time (TT) and universal time (UT1)')
 _arg_parser.add_argument('-r','--radians',action='store_true',help='Output in radians instead of degrees')
 _arg_parser.add_argument('--csv',action='store_true',help='Comma separated values (time,dt,lat,lon,elev,temp,pressure,az,zen,RA,dec,H)')
@@ -264,7 +264,7 @@ def sunposition(dt, latitude, longitude, elevation, temperature=None, pressure=N
     pressure : None or array_like of float, optional
         millibar, default is 1013 (global average in ??)
     atmos_refract : None or array_like of float, optional
-        Atmospheric refraction at sunrise and sunset, in degrees. Default is 0.5667
+        Atmospheric refraction at sunrise and sunset, in degrees. None to compute automatically. spa.c default is 0.5667
     delta_t : array_like of float, optional
         seconds, default is 0, difference between the earth's rotation time (TT) and universal time (UT)
     radians : bool, optional
@@ -285,20 +285,18 @@ def sunposition(dt, latitude, longitude, elevation, temperature=None, pressure=N
         temperature = 14.6
     if pressure is None:
         pressure = 1013
-    if atmos_refract is None:
-        atmos_refract = 0.5667
     if jit is None:
         jit = _ENABLE_JIT
 
     t = datetime_to_timestamp(dt)
 
     if jit:
-        args = np.broadcast_arrays(t, latitude, longitude, elevation, temperature, pressure, atmos_refract, delta_t)
+        args = np.broadcast_arrays(t, latitude, longitude, elevation, temperature, pressure, delta_t, atmos_refract)
         for a in args: a.flags.writeable = False
         sp = _sunpos_vec_jit(*args)
         sp = tuple(a[()] for a in sp) #unwrap np.array() from scalars
     else:
-        sp = _sunpos_vec(t, latitude, longitude, elevation, temperature, pressure, atmos_refract, delta_t)
+        sp = _sunpos_vec(t, latitude, longitude, elevation, temperature, pressure, delta_t, atmos_refract)
     if radians:
         sp = tuple(np.deg2rad(a) for a in sp)
 
@@ -456,8 +454,7 @@ def test(args):
         v = _greenwich_sidereal_time(jd, delta_psi, epsilon) #Greenwich_sidereal_time
         alpha, delta = _sun_ra_decl(llambda, epsilon, beta) #Geocentric_sun_right_ascension, Geocentric_sun_declination
         alpha_p, delta_p, H_p = _sun_topo_ra_decl_hour(lat,lon,elev,jd,deltat) #Topo_sun_right_ascension, Topo_sun_declination, Topo_local_hour_angle
-        az, zen, delta_e = _sun_topo_azimuth_zenith(lat,delta_p,H_p,temp,press) #Topo_az, Topo_zen, Atmospheric_refraction_correction
-        
+        az, zen = _sun_topo_azimuth_zenith(lat,delta_p,H_p,temp,press,0.5667) #Topo_az, Topo_zen, Atmospheric_refraction_correction
         jd_err = jd - truth['Julian_day']
         jde_err = jde - truth['Julian_ephemeris_day']
         jce_err = jce - truth['Julian_ephemeris_century']
@@ -478,8 +475,10 @@ def test(args):
         delta_prime_err = delta_p - truth['Topo_sun_declination']
         H_prime_err = angle_diff(H_p, truth['Topo_local_hour_angle'], 360)
         az_err = angle_diff(az, truth['Topo_az'], 360)
-        delta_e_err = delta_e - truth['Atmospheric_refraction_correction']
+        #delta_e_err = delta_e - truth['Atmospheric_refraction_correction']
+        delta_e_err = 0
         zen_err = zen - truth['Topo_zen']
+        
         all_errs.append([jd_err,jde_err,jce_err,jme_err,L_err,B_err,R_err,delta_psi_err,
                     epsilon_err,theta_err,beta_err,delta_tau_err,lambda_err,
                     v_err,alpha_err,delta_err,alpha_prime_err,delta_prime_err,
@@ -723,13 +722,15 @@ def _get_timestamp(dt):
 @register_jitable
 def _julian_day(t):
     """Calculate the Julian Day from posix timestamp (seconds since epoch)"""
+    #TODO: check julian-gregorian calendar changeover for posix timestamps
     year, month, day = _posix_time_to_date(t)
-    # year and month numbers
-    if month <= 2:  # From paper: "if M = 1 or 2, then Y = Y - 1 and M = M + 12"
+    # eq 4
+    # 3.1.1) if M = 1 or 2, then Y = Y - 1 and M = M + 12
+    if month <= 2:  
         month += 12
         year -= 1
-    # b is equal to 0 for the julian calendar and is equal to (2- A +
-    # INT(A/4)), A = INT(Y/100), for the gregorian calendar
+    # 3.1.1) B is equal to 0 for the Julian calendar and is equal to 
+    #    (2-A+INT(A/4)), A = INT(Y/100), for the Gregorian calendar.
     a = int(year / 100)
     b = 2 - a + int(a / 4)
     jd = int(365.25 * (year + 4716)) + int(30.6001 * (month + 1)) + day + b - 1524.5
@@ -748,27 +749,33 @@ def _julian_day_vec_jit(t):
     jds = jds.reshape(ts.shape)
     return jds[()]
 
-
 @register_jitable
-def _julian_ephemeris_day(jd, deltat):
+def _julian_ephemeris_day(jd, Delta_t):
     """Calculate the Julian Ephemeris Day from the Julian Day and delta-time = (terrestrial time - universal time) in seconds"""
-    return jd + deltat / 86400.0
+    # eq 5
+    return jd + Delta_t / 86400.0
 
 @register_jitable
 def _julian_century(jd):
     """Caluclate the Julian Century from Julian Day or Julian Ephemeris Day"""
+    # eq 6
+    # eq 7
     return (jd - 2451545.0) / 36525.0
 
 @register_jitable
 def _julian_millennium(jc):
     """Calculate the Julian Millennium from Julian Ephemeris Century"""
+    # eq 8
     return jc / 10.0
+
+## 3.2. Calculate the Earth heliocentric longitude, latitude, and radius vector (L, B, and R)
 
 @register_jitable
 def _cos_sum(x, coeffs):
     y = np.zeros(len(coeffs))
     for i, abc in enumerate(coeffs):
         for a,b,c in abc:
+            # eq 9
             y[i] += a*np.cos(b + c*x)
     return y
 
@@ -782,7 +789,7 @@ def _polyval_jit(p, x):
         return y
     return _polyval_impl
 
-# Earth Heliocentric Longitude coefficients (L0, L1, L2, L3, L4, and L5 in paper)
+# Table 1. Earth periodic terms, Earth Heliocentric Longitude coefficients (L0, L1, L2, L3, L4, and L5)
 _EHL = (
     #L5:
     np.array([(1.0, 3.14, 0.0)]),
@@ -841,13 +848,15 @@ _EHL = (
 @register_jitable
 def _heliocentric_longitude(jme):
     """Compute the Earth Heliocentric Longitude (L) in degrees given the Julian Ephemeris Millennium"""
-    #L5, ..., L0
-    Li = _cos_sum(jme, _EHL)
+    # eq 10
+    Li = _cos_sum(jme, _EHL) #L5, ..., L0
+    # eq 11
     L = np.polyval(Li, jme) / 1e8
+    # eq 12
     L = np.rad2deg(L) % 360
     return L
 
-#Earth Heliocentric Latitude coefficients (B0 and B1 in paper)
+# Table 1. Earth periodic terms, Earth Heliocentric Latitude coefficients (B0 and B1)
 _EHB = ( 
     #B1:
     np.array([(9.0, 3.9, 5507.55), (6.0, 1.73, 5223.69)]),
@@ -859,12 +868,13 @@ _EHB = (
 @register_jitable
 def _heliocentric_latitude(jme):
     """Compute the Earth Heliocentric Latitude (B) in degrees given the Julian Ephemeris Millennium"""
+    # section 3.2.7
     Bi = _cos_sum(jme, _EHB)
     B = np.polyval(Bi, jme) / 1e8
     B = np.rad2deg(B) % 360
     return B
 
-#Earth Heliocentric Radius coefficients (R0, R1, R2, R3, R4)
+#Table 1. Earth periodic terms, Earth Heliocentric Radius coefficients (R0, R1, R2, R3, R4)
 _EHR = (
     #R4:
     np.array([(4.0, 2.56, 6283.08)]),
@@ -898,7 +908,7 @@ _EHR = (
 @register_jitable
 def _heliocentric_radius(jme):
     """Compute the Earth Heliocentric Radius (R) in astronimical units given the Julian Ephemeris Millennium"""
-    
+    # section 3.2.8
     Ri = _cos_sum(jme, _EHR)
     R = np.polyval(Ri, jme) / 1e8
     return R
@@ -910,24 +920,21 @@ def _heliocentric_position(jme):
     """
     return _heliocentric_longitude(jme), _heliocentric_latitude(jme), _heliocentric_radius(jme)
 
-@register_jitable
-def _geocentric_position(helio_pos):
-    """Compute the geocentric latitude (Theta) and longitude (beta) (in degrees) of the sun given the earth's heliocentric position (L, B, R)"""
-    L,B,R = helio_pos
-    th = L + 180
-    b = -B
-    return (th, b)
+## 3.3. Calculate the geocentric longitude and latitude (Θ [Theta] and β [beta])
 
 @register_jitable
-def _ecliptic_obliquity(jme, delta_epsilon):
-    """Calculate the true obliquity of the ecliptic (epsilon, in degrees) given the Julian Ephemeris Millennium and the obliquity"""
-    u = jme/10
-    eq24_coeffs = np.array([2.45, 5.79, 27.87, 7.12, -39.05, -249.67, -51.38, 1999.25, -1.55, -4680.93, 84381.448])
-    e0 = np.polyval(eq24_coeffs, u)
-    e = e0/3600.0 + delta_epsilon
-    return e
+def _geocentric_position(heliocentric_position):
+    """Compute the geocentric latitude (Θ [Theta]) and longitude (β [beta]) (in degrees) of the sun given the earth's heliocentric position (L, B, R)"""
+    L,B,R = heliocentric_position
+    # eq 13
+    Theta = L + 180
+    # eq 14
+    beta = -B
+    return (Theta, beta)
 
-#Nutation Longitude and Obliquity coefficients (Y)
+## 3.4. Calculate the nutation in longitude and obliquity (Δψ [Delta_psi] and Δε [Delta_epsilon])
+
+#Table 2. Periodic terms for the nutation in longitude and obliquity, Coefficients for sin terms (Yi)
 _NLO_Y = np.array([(0.0,   0.0,   0.0,   0.0,   1.0), (-2.0,  0.0,   0.0,   2.0,   2.0), (0.0,   0.0,   0.0,   2.0,   2.0),
         (0.0,   0.0,   0.0,   0.0,   2.0), (0.0,   1.0,   0.0,   0.0,   0.0), (0.0,   0.0,   1.0,   0.0,   0.0),
         (-2.0,  1.0,   0.0,   2.0,   2.0), (0.0,   0.0,   0.0,   2.0,   1.0), (0.0,   0.0,   1.0,   2.0,   2.0),
@@ -950,7 +957,7 @@ _NLO_Y = np.array([(0.0,   0.0,   0.0,   0.0,   1.0), (-2.0,  0.0,   0.0,   2.0,
         (-1.0,  -1.0,  1.0,   0.0,   0.0), (0.0,   1.0,   1.0,   0.0,   0.0), (0.0,   -1.0,  1.0,   2.0,   2.0),
         (2.0,   -1.0,  -1.0,  2.0,   2.0), (0.0,   0.0,   3.0,   2.0,   2.0), (2.0,   -1.0,  0.0,   2.0,   2.0)])
 
-#Nutation Longitude and Obliquity coefficients (a,b)
+#Table 2. Periodic terms for the nutation in longitude and obliquity, Coefficients for Δψ [Delta_psi] (a,b) 
 _NLO_AB = np.array([(-171996.0, -174.2), (-13187.0, -1.6), (-2274.0, -0.2), (2062.0, 0.2), (1426.0, -3.4), (712.0, 0.1),
         (-517.0, 1.2), (-386.0, -0.4), (-301.0, 0.0), (217.0, -0.5), (-158.0, 0.0), (129.0, 0.1),
         (123.0, 0.0), (63.0,  0.0), (63.0,  0.1), (-59.0, 0.0), (-58.0, -0.1), (-51.0, 0.0),
@@ -962,7 +969,8 @@ _NLO_AB = np.array([(-171996.0, -174.2), (-13187.0, -1.6), (-2274.0, -0.2), (206
         (-5.0,  0.0), (4.0,   0.0), (4.0,   0.0), (4.0,   0.0), (-4.0,  0.0), (-4.0,  0.0),
         (-4.0,  0.0), (3.0,   0.0), (-3.0,  0.0), (-3.0,  0.0), (-3.0,  0.0), (-3.0,  0.0),
         (-3.0,  0.0), (-3.0,  0.0), (-3.0,  0.0)])
-#Nutation Longitude and Obliquity coefficients (c,d)
+
+#Table 2. Periodic terms for the nutation in longitude and obliquity, Coefficients for Δε [Delta_epsilon] (c,d) 
 _NLO_CD = np.array([(92025.0,   8.9), (5736.0,    -3.1), (977.0, -0.5), (-895.0,    0.5),
         (54.0,  -0.1), (-7.0,  0.0), (224.0, -0.6), (200.0, 0.0),
         (129.0, -0.1), (-95.0, 0.3), (0.0,   0.0), (-70.0, 0.0),
@@ -982,139 +990,222 @@ _NLO_CD = np.array([(92025.0,   8.9), (5736.0,    -3.1), (977.0, -0.5), (-895.0,
 
 @register_jitable
 def _nutation_obliquity(jce):
-    """compute the nutation in longitude (delta_psi) and the true obliquity (epsilon) given the Julian Ephemeris Century"""
+    """Compute the nutation in longitude (Δψ, Delta_psi) and the true obliquity (ε, epsilon) given the Julian Ephemeris Century"""
     #mean elongation of the moon from the sun, in radians:
-    #x0 = 297.85036 + 445267.111480*jce - 0.0019142*(jce**2) + (jce**3)/189474
+    # eq 15, mean elongation of the moon from the sun, in radians
     eq15_coeffs = np.array([1./189474, -0.0019142, 445267.111480, 297.85036])
     x0 = np.deg2rad(np.polyval(eq15_coeffs,jce))
-    #mean anomaly of the sun (Earth), in radians:
+    # eq 16, mean anomaly of the sun (Earth), in radians:
     eq16_coeffs = np.array([-1/3e5, -0.0001603, 35999.050340, 357.52772])
     x1 = np.deg2rad(np.polyval(eq16_coeffs, jce))
-    #mean anomaly of the moon, in radians:
+    # eq 17, mean anomaly of the moon, in radians:
     eq17_coeffs = np.array([1./56250, 0.0086972, 477198.867398, 134.96298])
     x2 = np.deg2rad(np.polyval(eq17_coeffs, jce))
-    #moon's argument of latitude, in radians:
+    # eq 18, moon's argument of latitude, in radians:
     eq18_coeffs = np.array([1./327270, -0.0036825, 483202.017538, 93.27191])
     x3 = np.deg2rad(np.polyval(eq18_coeffs, jce))
-    #Longitude of the ascending node of the moon's mean orbit on the ecliptic
-    # measured from the mean equinox of the date, in radians
+    # eq 19, Longitude of the ascending node of the moon's mean orbit on the
+    #   ecliptic measured from the mean equinox of the date, in radians:
     eq19_coeffs = np.array([1./45e4, 0.0020708, -1934.136261, 125.04452])
     x4 = np.deg2rad(np.polyval(eq19_coeffs, jce))
 
     x = np.array([x0, x1, x2, x3, x4])
 
+    # eq 20
+    # eq 22
     a,b = _NLO_AB.T
-    c,d = _NLO_CD.T
-    dp = np.sum((a + b*jce)*np.sin(np.dot(_NLO_Y, x)))/36e6
-    de = np.sum((c + d*jce)*np.cos(np.dot(_NLO_Y, x)))/36e6
+    Delta_psi = np.sum((a + b*jce)*np.sin(np.dot(_NLO_Y, x)))/36e6
     
-    e = _ecliptic_obliquity(_julian_millennium(jce), de)
+    # eq 21
+    # eq 23
+    c,d = _NLO_CD.T
+    Delta_epsilon = np.sum((c + d*jce)*np.cos(np.dot(_NLO_Y, x)))/36e6
+    
+    epsilon = _ecliptic_obliquity(_julian_millennium(jce), Delta_epsilon)
 
-    return dp, e
+    return Delta_psi, epsilon
+
+## 3.5. Calculate the true obliquity of the ecliptic, ε [epsilon] (in degrees)
+
+@register_jitable
+def _ecliptic_obliquity(jme, Delta_epsilon):
+    """Calculate the true obliquity of the ecliptic (ε [epsilon], in degrees) given the Julian Ephemeris Millennium and the obliquity"""
+    # eq 24
+    u = jme/10
+    eq24_coeffs = np.array([2.45, 5.79, 27.87, 7.12, -39.05, -249.67, -51.38, 1999.25, -1.55, -4680.93, 84381.448])
+    epsilon_0 = np.polyval(eq24_coeffs, u)
+    # eq 25
+    epsilon = epsilon_0/3600.0 + Delta_epsilon
+    return epsilon
+
+## 3.6. Calculate the aberration correction, Δτ [Delta_tau] (in degrees)
 
 @register_jitable
 def _abberation_correction(R):
-    """Calculate the abberation correction (delta_tau, in degrees) given the Earth Heliocentric Radius (in AU)"""
-    return -20.4898/(3600*R)
+    """Calculate the abberation correction (Δτ [Delta_tau], in degrees) given the Earth Heliocentric Radius (in AU)"""
+    # eq 26
+    Delta_tau = -20.4898/(3600*R)
+    return Delta_tau
+
+## 3.7. Calculate the apparent sun longitude, λ [lambda] (in degrees)
 
 @register_jitable
-def _sun_longitude(helio_pos, delta_psi):
-    """Calculate the apparent sun longitude (lambda, in degrees) and geocentric latitude (beta, in degrees) given the earth heliocentric position and delta_psi"""
-    L,B,R = helio_pos
-    theta = L + 180 #geocentric longitude
-    beta = -B #geocentric latitude
-    ll = theta + delta_psi + _abberation_correction(R)
-    return ll, beta
+def _sun_longitude(heliocentric_position, Delta_psi):
+    """Calculate the apparent sun longitude (λ [lambda], in degrees) and geocentric latitude (β [beta], in degrees) given the earth heliocentric position and Δψ [Delta psi]"""
+    R = heliocentric_position[2]
+    Theta, beta = _geocentric_position(heliocentric_position)
+    # eq 27
+    lambda_ = Theta + Delta_psi + _abberation_correction(R)
+    return lambda_, beta
+
+## 3.8. Calculate the apparent sidereal time at Greenwich at any given time, ν [nu] (in degrees)
 
 @register_jitable
-def _greenwich_sidereal_time(jd, delta_psi, epsilon):
-    """Calculate the apparent Greenwich sidereal time (v, in degrees) given the Julian Day"""
+def _greenwich_sidereal_time(jd, Delta_psi, epsilon):
+    """Calculate the apparent Greenwich sidereal time (ν [nu], in degrees) given the Julian Day"""
     jc = _julian_century(jd)
-    #mean sidereal time at greenwich, in degrees:
-    v0 = (280.46061837 + 360.98564736629*(jd - 2451545) + 0.000387933*(jc**2) - (jc**3)/38710000) % 360
-    v = v0 + delta_psi*np.cos(np.deg2rad(epsilon))
-    return v
+    # eq 28, mean sidereal time at greenwich, in degrees:
+    nu0 = (280.46061837 + 360.98564736629*(jd - 2451545) + 0.000387933*(jc**2) - (jc**3)/38710000) % 360
+    # eq 29
+    nu = nu0 + Delta_psi*np.cos(np.deg2rad(epsilon))
+    return nu
+
+## 3.9. Calculate the geocentric sun right ascension, α [alpha] (in degrees)
+## 3.10. Calculate the geocentric sun declination, δ [delta] (in degrees)
 
 @register_jitable
-def _sun_ra_decl(llambda, epsilon, beta):
-    """Calculate the sun's geocentric right ascension (alpha, in degrees) and declination (delta, in degrees)"""
-    l = np.deg2rad(llambda)
+def _sun_ra_decl(lambda_, epsilon, beta):
+    """Calculate the sun's geocentric right ascension (α [alpha], in degrees) and declination (δ [delta], in degrees)"""
+    l = np.deg2rad(lambda_)
     e = np.deg2rad(epsilon)
     b = np.deg2rad(beta)
+    # eq 30
     alpha = np.arctan2(np.sin(l)*np.cos(e) - np.tan(b)*np.sin(e), np.cos(l)) #x1 / x2
     alpha = np.rad2deg(alpha) % 360
+    # eq 31
     delta = np.arcsin(np.sin(b)*np.cos(e) + np.cos(b)*np.sin(e)*np.sin(l))
     delta = np.rad2deg(delta)
     return alpha, delta
 
+## 3.11. Calculate the observer local hour angle, H (in degrees)
+## 3.12. Calculate the topocentric sun right ascension, α' [alpha prime] (in degrees)
+## 3.13. Calculate the topocentric local hour angle, H' (in degrees)
 @register_jitable
 def _sun_topo_ra_decl_hour(latitude, longitude, elevation, jd, delta_t = 0):
-    """Calculate the sun's topocentric right ascension (alpha'), declination (delta'), and hour angle (H')"""
+    """Calculate the sun's topocentric right ascension (α' [alpha_prime]), declination (δ' [delta_prime]), and hour angle (H' [H_prime])"""
     
     jde = _julian_ephemeris_day(jd, delta_t)
     jce = _julian_century(jde)
     jme = _julian_millennium(jce)
 
     helio_pos = _heliocentric_position(jme)
-    R = helio_pos[-1]
+    R = helio_pos[2]
     phi, E = np.deg2rad(latitude), elevation
-    #equatorial horizontal parallax of the sun, in radians
-    xi = np.deg2rad(8.794/(3600*R)) #
-    #rho = distance from center of earth in units of the equatorial radius
-    #phi-prime = geocentric latitude
-    #NB: These equations look like their based on WGS-84, but are rounded slightly
-    # The WGS-84 reference ellipsoid has major axis a = 6378137 m, and flattening factor 1/f = 298.257223563
-    # minor axis b = a*(1-f) = 6356752.3142 = 0.996647189335*a
-    u = np.arctan(0.99664719*np.tan(phi)) #
-    x = np.cos(u) + E*np.cos(phi)/6378140 #rho sin(phi-prime)
-    y = 0.99664719*np.sin(u) + E*np.sin(phi)/6378140 #rho cos(phi-prime)
-
-    delta_psi, epsilon = _nutation_obliquity(jce) #
-
-    llambda, beta = _sun_longitude(helio_pos, delta_psi) #
     
-    alpha, delta = _sun_ra_decl(llambda, epsilon, beta) #
+    # eq 33. equatorial horizontal parallax of the sun, in radians
+    xi = np.deg2rad(8.794/(3600*R))
 
-    v = _greenwich_sidereal_time(jd, delta_psi, epsilon) #
+    # eq 34
+    u = np.arctan(0.99664719*np.tan(phi))
 
-    H = v + longitude - alpha #
-    Hr, dr = np.deg2rad(H), np.deg2rad(delta)
+    # eq 35
+    x = np.cos(u) + E*np.cos(phi)/6378140
 
-    dar = np.arctan2(-x*np.sin(xi)*np.sin(Hr), np.cos(dr)-x*np.sin(xi)*np.cos(Hr))
-    delta_alpha = np.rad2deg(dar) #
+    # eq 36
+    y = 0.99664719*np.sin(u) + E*np.sin(phi)/6378140
+
+    # Note: x, y = rho*sin(phi_prime), rho*cos(phi_prime)
+    # rho = distance from center of earth in units of the equatorial radius
+    # phi_prime = geocentric latitude
+    # NB: These equations look like they're based on WGS-84, but are rounded slightly
+    #   The WGS-84 reference ellipsoid has major axis a = 6378137 m, and flattening factor 1/f = 298.257223563
+    #   minor axis b = a*(1-f) = 6356752.3142 = 0.996647189335*a
+
+    Delta_psi, epsilon = _nutation_obliquity(jce)
+    lambda_, beta = _sun_longitude(helio_pos, Delta_psi)
+    alpha, delta = _sun_ra_decl(lambda_, epsilon, beta)
+    nu = _greenwich_sidereal_time(jd, Delta_psi, epsilon)
+
+    # eq 32
+    H = nu + longitude - alpha
     
-    alpha_prime = alpha + delta_alpha #
-    delta_prime = np.rad2deg(np.arctan2((np.sin(dr) - y*np.sin(xi))*np.cos(dar), np.cos(dr) - y*np.sin(xi)*np.cos(Hr))) #
-    H_prime = H - delta_alpha #
+    # eq 37
+    H_rad, delta_rad = np.deg2rad(H), np.deg2rad(delta)
+    sin_xi = np.sin(xi)
+    cos_H, sin_H = np.cos(H_rad), np.sin(H_rad)
+    cos_delta, sin_delta = np.cos(delta_rad), np.sin(delta_rad)
+    Delta_alpha_rad = np.arctan2(-x*sin_xi*sin_H, cos_delta-x*sin_xi*cos_H)
+    Delta_alpha = np.rad2deg(Delta_alpha_rad)
+    
+    # eq 38
+    alpha_prime = alpha + Delta_alpha
+
+    # eq 39
+    delta_prime = np.rad2deg(np.arctan2((sin_delta - y*sin_xi)*np.cos(Delta_alpha_rad), cos_delta - y*sin_xi*cos_H))
+
+    # eq 40
+    H_prime = H - Delta_alpha
 
     return alpha_prime, delta_prime, H_prime
 
+## 3.14. Calculate the topocentric zenith angle, theta (in degrees)
+## 3.15. Calculate the topocentric azimuth angle, Phi (in degrees)
 @register_jitable
-def _sun_topo_azimuth_zenith(latitude, delta_prime, H_prime, temperature=14.6, pressure=1013, atmos_refract=0.5667):
-    """Compute the sun's topocentric azimuth and zenith angles
+def _atmospheric_correction(e0, temperature, pressure, atmos_refract, sun_radius=0.26667):
+    '''Apply atmospheric refraction correction
+    In the original paper, atmospheric refraction correction is applied in all cases
+    In the official C software, atmospheric refraction correction is only applied if the sun is
+        above a certain elevation threshold, specified using the atmos_refract parameter, which defaults to 0.5667 deg.
+        The documentation states "Set the atmos. refraction correction to zero, when sun is below horizon." and describes
+        atmos_refract as "Atmospheric refraction at sunrise and sunset [degrees]".
+    We observe that atmos_refract is nominally Delta_e when the sun is at the horizon (one radius below), so we can check
+        post-hoc whether the adjusted elevation is below the horizon, and remove the adjustment if not. This removes the
+        necessity for the atmos_refract parameter (which would otherwise need to be recomputed for various temperatures/pressures)
+    
+    To use the manual elevation threshold, (as per spa.c), specify atmos_refract
+    To use the automatic elevation threshold, use atmos_refract=None
+    '''
+    # eq 42
+    tmp = np.deg2rad(e0 + 10.3/(e0+5.11))
+    Delta_e = (pressure/1010.0)*(283.0/(273+temperature))*(1.02/(60*np.tan(tmp)))
+    # eq 43
+    if atmos_refract is None:
+        # our code path, assessing whether the sun is above the horizon after applying the correction
+        e = e0 + Delta_e
+        if e < -sun_radius:
+            # the sun is below the horizon, remove the correction
+            e = e0
+    else:
+        # spa.c code path, estimate whether the sun is above the horizon using atmos_refract
+        if e0 < -1*(sun_radius + atmos_refract):
+            Delta_e = 0    
+        e = e0 + Delta_e
+    return e
+
+@register_jitable
+def _sun_topo_azimuth_zenith(latitude, delta_prime, H_prime, temperature, pressure, atmos_refract):
+    """Compute the sun's topocentric azimuth (Φ [Phi]) and zenith angles (θ [theta])
     azimuth is measured eastward from north, zenith from vertical
     temperature = average temperature in C (default is 14.6 = global average in 2013)
     pressure = average pressure in mBar (default 1013 = global average)
     """
     SUN_RADIUS = 0.26667
     phi = np.deg2rad(latitude)
-    dr, Hr = np.deg2rad(delta_prime), np.deg2rad(H_prime)
-    P, T = pressure, temperature
-    e0 = np.rad2deg(np.arcsin(np.sin(phi)*np.sin(dr) + np.cos(phi)*np.cos(dr)*np.cos(Hr)))
-    delta_e = 0.0
-    if e0 >= -1*(SUN_RADIUS + atmos_refract):
-        tmp = np.deg2rad(e0 + 10.3/(e0+5.11))
-        delta_e = (P/1010.0)*(283.0/(273+T))*(1.02/(60*np.tan(tmp)))
+    delta_prime_rad, H_prime_rad = np.deg2rad(delta_prime), np.deg2rad(H_prime)
+    
+    # eq 41, topocentric elevation angle, uncorrected
+    e0 = np.rad2deg(np.arcsin(np.sin(phi)*np.sin(delta_prime_rad) + np.cos(phi)*np.cos(delta_prime_rad)*np.cos(H_prime_rad)))
 
-    e = e0 + delta_e
-    zenith = 90 - e
+    e = _atmospheric_correction(e0, temperature, pressure, atmos_refract)
+    theta = 90 - e
 
-    gamma = np.rad2deg(np.arctan2(np.sin(Hr), np.cos(Hr)*np.sin(phi) - np.tan(dr)*np.cos(phi))) % 360
-    Phi = (gamma + 180) % 360 #azimuth from north
-    return Phi, zenith, delta_e
+    Gamma = np.rad2deg(np.arctan2(np.sin(H_prime_rad), np.cos(H_prime_rad)*np.sin(phi) - np.tan(delta_prime_rad)*np.cos(phi))) % 360
+    Phi = (Gamma + 180) % 360 #azimuth from north
+    return Phi, theta
 
 @register_jitable
 def _norm_lat_lon(lat,lon):
+    '''Normalize latitude and longitude into standard ranges'''
     if lat < -90 or lat > 90:
         #convert to cartesian and back
         x = np.cos(np.deg2rad(lon))*np.cos(np.deg2rad(lat))
@@ -1128,49 +1219,50 @@ def _norm_lat_lon(lat,lon):
     return lat,lon
 
 @register_jitable
-def _topo_sunpos(t, lat, lon, elev, dt):
-    """compute RA,dec,H, all in degrees"""
+def _topo_sunpos(t, latitude, longitude, elevation, Delta_t):
+    """compute sun topocentric right ascension (α' [alpha_prime]), declination (δ' [delta_prime]), hour angle (H' [H_prime]), all in degrees"""
     jd = _julian_day(t)
-    lat,lon = _norm_lat_lon(lat,lon)
-    RA, dec, H = _sun_topo_ra_decl_hour(lat, lon, elev, jd, dt)
-    return RA, dec, H
+    latitude,longitude = _norm_lat_lon(latitude,longitude)
+    alpha_prime, delta_prime, H_prime = _sun_topo_ra_decl_hour(latitude, longitude, elevation, jd, Delta_t)
+    return alpha_prime, delta_prime, H_prime
 
 _topo_sunpos_vec = np.vectorize(_topo_sunpos)
 
 @njit
-def _topo_sunpos_vec_jit(t, lat, lon, elev, dt):
-    '''Compute RA, dec, H, all in degrees; vectorized for use with Numba
+def _topo_sunpos_vec_jit(t, latitude, longitude, elevation, Delta_t):
+    '''Compute sun topocentric coordinates; vectorized for use with Numba
     Arguments must be broadcast before calling: Numba's broadcast does not match Numpy's with scalar arguments
     Return values must be unwrapped after calling because Numba can't handle dynamic return types
     '''
     #broadcast
     out_shape = t.shape
     #flatten
-    args_flat = t.flat, lat.flat, lon.flat, elev.flat, dt.flat
+    args_flat = t.flat, latitude.flat, longitude.flat, elevation.flat, Delta_t.flat
     n = len(args_flat[0])
     #allocate outputs as flat arrays
-    RA, dec, H = np.empty(n), np.empty(n), np.empty(n)
+    alpha_prime, delta_prime, H_prime = np.empty(n), np.empty(n), np.empty(n)
     #do calculations over flattened inputs
     for i, arg in enumerate(zip(*args_flat)):
-        RA[i], dec[i], H[i] = _topo_sunpos(*arg)
+        alpha_prime[i], delta_prime[i], H_prime[i] = _topo_sunpos(*arg)
     #reshape to final dims
-    RA, dec, H = RA.reshape(out_shape), dec.reshape(out_shape), H.reshape(out_shape)
-    return RA, dec, H
-
+    alpha_prime = alpha_prime.reshape(out_shape)
+    delta_prime = delta_prime.reshape(out_shape)
+    H_prime = H_prime.reshape(out_shape)
+    return alpha_prime, delta_prime, H_prime
 
 @register_jitable
-def _sunpos(t, lat, lon, elev, temp, press, atmos_refract, dt):
-    """Compute azimuth,zenith,RA,dec,H"""
+def _sunpos(t, latitude, longitude, elevation, temperature, pressure, Delta_t, atmos_refract):
+    """Compute the sun's topocentric azimuth (Φ [Phi]), zenith (θ [theta]), right ascension (α' [alpha_prime]), declination (δ' [delta_prime]), and hour angle (H' [H_prime])"""
     jd = _julian_day(t)
-    lat,lon = _norm_lat_lon(lat,lon)
-    RA, dec, H = _sun_topo_ra_decl_hour(lat, lon, elev, jd, dt)
-    azimuth, zenith, delta_e = _sun_topo_azimuth_zenith(lat, dec, H, temp, press, atmos_refract)
-    return azimuth, zenith, RA, dec, H
+    latitude,longitude = _norm_lat_lon(latitude,longitude)
+    alpha_prime, delta_prime, H_prime = _sun_topo_ra_decl_hour(latitude, longitude, elevation, jd, Delta_t)
+    Phi, theta = _sun_topo_azimuth_zenith(latitude, delta_prime, H_prime, temperature, pressure, atmos_refract)
+    return Phi, theta, alpha_prime, delta_prime, H_prime
 
 _sunpos_vec = np.vectorize(_sunpos)
 
 @njit
-def _sunpos_vec_jit(t, lat, lon, elev, temp, press, atmos_refract, dt):
+def _sunpos_vec_jit(t, latitude, longitude, elevation, temperature, pressure, Delta_t, atmos_refract):
     '''Compute azimuth,zenith,RA,ec,H; vectorized for use with Numba
     Note that arguments must be broadcast in advance as numba's broadcast does not match numpy's with scalar arguments
     Return values must be unwrapped after calling because Numba can't handle dynamic return types
@@ -1178,19 +1270,19 @@ def _sunpos_vec_jit(t, lat, lon, elev, temp, press, atmos_refract, dt):
     out_shape = t.shape #final output shape
     
     #flatten inputs
-    args_flat = t.flat, lat.flat, lon.flat, elev.flat, temp.flat, press.flat, atmos_refract.flat, dt.flat
+    args_flat = t.flat, latitude.flat, longitude.flat, elevation.flat, temperature.flat, pressure.flat, Delta_t.flat, atmos_refract.flat
     n = len(args_flat[0])
     #allocate outputs as flat arrays
-    azimuth, zenith = np.empty(n), np.empty(n)
-    RA, dec, H = np.empty(n), np.empty(n), np.empty(n)
+    Phi, theta = np.empty(n), np.empty(n)
+    alpha_prime, delta_prime, H_prime = np.empty(n), np.empty(n), np.empty(n)
     #do calculations over flattened inputs
     for i, arg in enumerate(zip(*args_flat)):
-        t, lat, lon, elev, temp, press, atmos_refract, dt = arg
-        azimuth[i], zenith[i], RA[i], dec[i], H[i] = _sunpos(t, lat, lon, elev, temp, press, atmos_refract, dt)
+        t, lat, lon, elev, temp, press, dt, ar = arg
+        Phi[i], theta[i], alpha_prime[i], delta_prime[i], H_prime[i] = _sunpos(t, lat, lon, elev, temp, press, dt, ar)
     #reshape outputs to final dimensions
-    azimuth, zenith = azimuth.reshape(out_shape), zenith.reshape(out_shape)
-    RA, dec, H = RA.reshape(out_shape), dec.reshape(out_shape), H.reshape(out_shape)
-    return azimuth, zenith, RA, dec, H
+    Phi, theta = Phi.reshape(out_shape), theta.reshape(out_shape)
+    alpha_prime, delta_prime, H_prime = alpha_prime.reshape(out_shape), delta_prime.reshape(out_shape), H_prime.reshape(out_shape)
+    return Phi, theta, alpha_prime, delta_prime, H_prime
 
 if __name__ == '__main__':
     sys.exit(main())
