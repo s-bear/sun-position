@@ -20,13 +20,18 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import os, sys, argparse, re
+import os
+import sys
+import argparse
+import re
 import numpy as np
-import time,datetime
+import time
+import datetime
 
 try:
     #scipy is required for numba's linear algebra routines to work
-    import numba, scipy
+    import numba
+    import scipy
 except:
     numba = None
 
