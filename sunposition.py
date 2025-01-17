@@ -53,42 +53,6 @@ _arg_parser.add_argument('-r','--radians',action='store_true',help='Output in ra
 _arg_parser.add_argument('--csv',action='store_true',help='Comma separated values (time,dt,lat,lon,elev,temp,pressure,az,zen,RA,dec,H)')
 _arg_parser.add_argument('--jit',action='store_true',help='Enable Numba acceleration (likely to cause slowdown for a single computation!)')
 
-def empty_decorator(f = None, *args, **kw):
-    if callable(f):
-        return f
-    return empty_decorator
-
-if numba is not None:
-    # register_jitable informs numba that a function may be compiled when
-    # called from jit'ed code, but doesn't jit it by default
-    register_jitable = numba.extending.register_jitable
-
-    # overload informs numba of an *alternate implementation* of a function to
-    # use within jit'ed code -- we use it to provide a jit-able version of polyval
-    overload = numba.extending.overload
-    
-    #njit compiles code -- we use this for our top-level functions
-    njit = numba.njit
-
-    _ENABLE_JIT = not numba.config.DISABLE_JIT and not os.environ.get('NUMBA_DISABLE_JIT',False)
-else:
-    #if numba is not available, use empty_decorator instead
-    njit = empty_decorator
-    overload = lambda *a,**k: empty_decorator
-    register_jitable = empty_decorator
-    _ENABLE_JIT = False
-
-
-def enable_jit(en = True):
-    global _ENABLE_JIT
-    if en and numba is None:
-        print('WARNING: JIT unavailable (requires numba and scipy)',file=sys.stderr)
-    #We set the _ENABLE_JIT flag regardless of whether numba is available, just to test that code path!
-    _ENABLE_JIT = en
-
-def disable_jit():
-    enable_jit(False)
-
 def main(args=None, **kwargs):
     """Run sunposition command-line tool.
 
@@ -172,18 +136,17 @@ def main(args=None, **kwargs):
 
     return 0
 
-def _arcdist(p0,p1):
-    a0,z0 = p0[...,0], p0[...,1]
-    a1,z1 = p1[...,0], p1[...,1]
-    return np.arccos(np.cos(z0)*np.cos(z1)+np.cos(a0-a1)*np.sin(z0)*np.sin(z1))
+def enable_jit(en = True):
+    global _ENABLE_JIT
+    if en and numba is None:
+        print('WARNING: JIT unavailable (requires numba and scipy)',file=sys.stderr)
+    #We set the _ENABLE_JIT flag regardless of whether numba is available, just to test that code path!
+    _ENABLE_JIT = en
 
-def _arcdist_deg(p0,p1):
-    return np.rad2deg(_arcdist(np.deg2rad(p0),np.deg2rad(p1)))
+def disable_jit():
+    enable_jit(False)
 
-_arcdist_jit = njit(_arcdist)
-_arcdist_deg_jit = njit(_arcdist_deg)
-
-def arcdist(p0,p1,radians=False, jit=None):
+def arcdist(p0, p1, *, radians=False, jit=None):
     """Angular distance between azimuth,zenith pairs
     
     Parameters
@@ -213,7 +176,79 @@ def arcdist(p0,p1,radians=False, jit=None):
         if jit: return _arcdist_deg_jit(p0,p1)
         else: return _arcdist_deg(p0,p1)
 
-def sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, atmos_refract=None, delta_t=0, radians=False, jit=None):
+def datetime_to_timestamp(dt):
+    '''Convert various date/time formats to POSIX timestamps.
+
+    dt is a datetime.datetime: uses dt.timestamp(), which uses the
+        local timezone by default. To avoid timezone errors, use timezone aware
+        datetime functionality when possible.
+    
+    dt is a numpy.datetime64: converts to POSIX timestamps with 
+        microsecond precision: dt.astype('datetime64[us]').astype(np.int64)/1e6
+    
+    dt is a str: accepts 3 formats of string:
+        'now' : uses time.time() to return the current timestamp
+        floating point : parsed using float(dt)
+        ISO 8601 : a standard ISO date-time string, with some variation accepted
+                   eg. '2024-04-08T11:09:34-07:00', '2024-04-08 11:09:34-07:00',
+                       '20240408 110934-07', '20240408T180934.000Z', all 
+                       produce the same timestamp
+    
+    Parameters
+    ----------
+    dt : array_like of datetime.datetime, numpy.datetime64, ISO 8601 strings
+        date/times to convert to POSIX timestamps. 
+    
+    Returns
+    -------
+    t : ndarray
+        dt converted to POSIX timestamps, or if dt is not one of the listed formats
+        it is returned unchanged.
+    '''
+    dt = np.asarray(dt)
+    # [()] unwrap scalar values out of np.array
+    if np.issubdtype(dt.dtype, str):
+        t = _string_to_posix_time_vec(dt)[()]
+    elif np.issubdtype(dt.dtype, datetime.datetime):
+        t = _get_timestamp(dt)[()]
+    elif np.issubdtype(dt.dtype, np.datetime64):
+        t = (dt.astype('datetime64[us]').astype(np.int64)/1e6)[()]
+    else:
+        t = dt
+    return t 
+
+def timestamp_to_iso8601(t):
+    '''Convert POSIX timestamps to ISO8601 timestamp strings'''
+    t = np.asarray(t)
+    s = _posix_time_to_string_vec(t)
+    if s.shape == (): return str(s)
+    return s
+
+def julian_day(dt, *, jit=None):
+    """Convert timestamps from various formats to Julian days
+
+    Parameters
+    ----------
+    dt : array_like
+        datetime.datetime, numpy.datetime64, ISO8601 strings, or POSIX timestamps (str, float, int)
+    jit : bool or None
+        override module jit settings, to True/False to enable/disable numba acceleration
+    
+    Returns
+    -------
+    jd : ndarray
+        datetimes converted to fractional Julian days
+    """
+
+    t = datetime_to_timestamp(dt)
+    if jit is None: jit = _ENABLE_JIT
+    if jit:
+        jd = _julian_day_vec_jit(t)
+    else:
+        jd = _julian_day_vec(t)
+    return jd[()] # use [()] to "unwrap" scalar values out of np.array
+
+def sunposition(dt, latitude, longitude, elevation, temperature=None, pressure=None, atmos_refract=None, delta_t=0, *, radians=False, jit=None):
     """Compute the observed and topocentric coordinates of the sun as viewed at the given time and location.
 
     Parameters
@@ -269,7 +304,7 @@ def sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, 
 
     return sp
 
-def topocentric_sunpos(dt, latitude, longitude, elevation, delta_t=0, radians=False, jit=None):
+def topocentric_sunposition(dt, latitude, longitude, elevation, delta_t=0, *, radians=False, jit=None):
     """Compute the topocentric coordinates of the sun as viewed at the given time and location.
 
     Parameters
@@ -307,7 +342,7 @@ def topocentric_sunpos(dt, latitude, longitude, elevation, delta_t=0, radians=Fa
         sp = tuple(np.deg2rad(a) for a in sp)
     return sp
 
-def observed_sunpos(dt, latitude, longitude, elevation, temperature=None, pressure=None, atmos_refract=None, delta_t=0, radians=False, jit=None):
+def observed_sunposition(dt, latitude, longitude, elevation, temperature=None, pressure=None, atmos_refract=None, delta_t=0, *, radians=False, jit=None):
     """Compute the observed coordinates of the sun as viewed at the given time and location.
 
     Parameters
@@ -337,6 +372,10 @@ def observed_sunpos(dt, latitude, longitude, elevation, temperature=None, pressu
     zenith_angle : ndarray, measured down from vertical
     """
     return sunpos(dt, latitude, longitude, elevation, temperature, pressure, atmos_refract, delta_t, radians, jit)[:2]
+
+sunpos = sunposition
+topocentrict_sunpos = topocentric_sunposition
+observed_sunpos = observed_sunposition
 
 def test(args):
     test_file = args.test
@@ -451,7 +490,48 @@ def test(args):
     for n, e in zip(err_names, rms_err):
         print('{}: {}'.format(n, e))
 
-## Dates and times
+## Numba decorators ##
+
+def _empty_decorator(f = None, *args, **kw):
+    if callable(f):
+        return f
+    return _empty_decorator
+
+if numba is not None:
+    # register_jitable informs numba that a function may be compiled when
+    # called from jit'ed code, but doesn't jit it by default
+    register_jitable = numba.extending.register_jitable
+
+    # overload informs numba of an *alternate implementation* of a function to
+    # use within jit'ed code -- we use it to provide a jit-able version of polyval
+    overload = numba.extending.overload
+    
+    #njit compiles code -- we use this for our top-level functions
+    njit = numba.njit
+
+    _ENABLE_JIT = not numba.config.DISABLE_JIT and not os.environ.get('NUMBA_DISABLE_JIT',False)
+else:
+    #if numba is not available, use _empty_decorator instead
+    njit = _empty_decorator
+    overload = lambda *a,**k: _empty_decorator
+    register_jitable = _empty_decorator
+    _ENABLE_JIT = False
+
+## arcdist ##
+
+def _arcdist(p0,p1):
+    a0,z0 = p0[...,0], p0[...,1]
+    a1,z1 = p1[...,0], p1[...,1]
+    return np.arccos(np.cos(z0)*np.cos(z1)+np.cos(a0-a1)*np.sin(z0)*np.sin(z1))
+
+def _arcdist_deg(p0,p1):
+    return np.rad2deg(_arcdist(np.deg2rad(p0),np.deg2rad(p1)))
+
+_arcdist_jit = njit(_arcdist)
+_arcdist_deg_jit = njit(_arcdist_deg)
+
+## Dates and times ##
+
 # this application has unusual date/time requirements that are not supported by
 # Python's time or datetime libraries. Specifically:
 # 1. The subroutines use Julian days to represent time
@@ -636,53 +716,9 @@ def _get_timestamp(dt):
     '''get the timestamp from a datetime.datetime object'''
     return dt.timestamp()
 
-def datetime_to_timestamp(dt):
-    '''Convert various date/time formats to POSIX timestamps.
+## Procedure from Reda, Andreas (2004) ##
 
-    dt is a datetime.datetime: uses dt.timestamp(), which uses the
-        local timezone by default. To avoid timezone errors, use timezone aware
-        datetime functionality when possible.
-    
-    dt is a numpy.datetime64: converts to POSIX timestamps with 
-        microsecond precision: dt.astype('datetime64[us]').astype(np.int64)/1e6
-    
-    dt is a str: accepts 3 formats of string:
-        'now' : uses time.time() to return the current timestamp
-        floating point : parsed using float(dt)
-        ISO 8601 : a standard ISO date-time string, with some variation accepted
-                   eg. '2024-04-08T11:09:34-07:00', '2024-04-08 11:09:34-07:00',
-                       '20240408 110934-07', '20240408T180934.000Z', all 
-                       produce the same timestamp
-    
-    Parameters
-    ----------
-    dt : array_like of datetime.datetime, numpy.datetime64, ISO 8601 strings
-        date/times to convert to POSIX timestamps. 
-    
-    Returns
-    -------
-    t : ndarray
-        dt converted to POSIX timestamps, or if dt is not one of the listed formats
-        it is returned unchanged.
-    '''
-    dt = np.asarray(dt)
-    # [()] unwrap scalar values out of np.array
-    if np.issubdtype(dt.dtype, str):
-        t = _string_to_posix_time_vec(dt)[()]
-    elif np.issubdtype(dt.dtype, datetime.datetime):
-        t = _get_timestamp(dt)[()]
-    elif np.issubdtype(dt.dtype, np.datetime64):
-        t = (dt.astype('datetime64[us]').astype(np.int64)/1e6)[()]
-    else:
-        t = dt
-    return t 
-
-def timestamp_to_iso8601(t):
-    '''Convert POSIX timestamps to ISO8601 timestamp strings'''
-    t = np.asarray(t)
-    s = _posix_time_to_string_vec(t)
-    if s.shape == (): return str(s)
-    return s
+## 3.1. Calculate the Julian and Julian Ephemeris Day (JDE), centure, and millenium
 
 @register_jitable
 def _julian_day(t):
@@ -712,29 +748,6 @@ def _julian_day_vec_jit(t):
     jds = jds.reshape(ts.shape)
     return jds[()]
 
-def julian_day(dt, jit=None):
-    """Convert timestamps from various formats to Julian days
-
-    Parameters
-    ----------
-    dt : array_like
-        datetime.datetime, numpy.datetime64, ISO8601 strings, or POSIX timestamps (float or int)
-    jit : bool or None
-        override module jit settings, to True/False to enable/disable numba acceleration
-    
-    Returns
-    -------
-    jd : ndarray
-        datetimes converted to fractional Julian days
-    """
-
-    t = datetime_to_timestamp(dt)
-    if jit is None: jit = _ENABLE_JIT
-    if jit:
-        jd = _julian_day_vec_jit(t)
-    else:
-        jd = _julian_day_vec(t)
-    return jd[()] # use [()] to "unwrap" scalar values out of np.array
 
 @register_jitable
 def _julian_ephemeris_day(jd, deltat):
