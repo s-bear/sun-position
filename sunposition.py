@@ -27,6 +27,7 @@ import re
 import numpy as np
 import time
 import datetime
+import warnings
 
 try:
     #scipy is required for numba's linear algebra routines to work
@@ -1076,8 +1077,8 @@ _NLO_CD = np.array([(92025.0,   8.9), (5736.0,    -3.1), (977.0, -0.5), (-895.0,
         (0.0, 0.0), (0.0, 0.0), (0.0, 0.0)])
 
 @register_jitable
-def _nutation_obliquity(jce):
-    """Compute the nutation in longitude (Δψ, Delta_psi) and the true obliquity (ε, epsilon) given the Julian Ephemeris Century"""
+def _eqs15_19(jce):
+    '''Compute eqs 15-18, in radians'''
     #mean elongation of the moon from the sun, in radians:
     # eq 15, mean elongation of the moon from the sun, in radians
     eq15_coeffs = np.array([1./189474, -0.0019142, 445267.111480, 297.85036])
@@ -1096,7 +1097,13 @@ def _nutation_obliquity(jce):
     eq19_coeffs = np.array([1./45e4, 0.0020708, -1934.136261, 125.04452])
     x4 = np.deg2rad(np.polyval(eq19_coeffs, jce))
 
-    x = np.array([x0, x1, x2, x3, x4])
+    return np.array([x0, x1, x2, x3, x4])
+
+@register_jitable
+def _nutation_obliquity(jce):
+    """Compute the nutation in longitude (Δψ, Delta_psi) and the true obliquity of the ecliptic (ε, epsilon) given the Julian Ephemeris Century"""
+    
+    x = _eqs15_19(jce)
 
     # eq 20
     # eq 22
@@ -1252,20 +1259,25 @@ def _atmospheric_correction(e0, temperature, pressure, atmos_refract, sun_radius
     To use the manual elevation threshold, (as per spa.c), specify atmos_refract
     To use the automatic elevation threshold, use atmos_refract=None
     '''
+    # spa.c code:
+    # Delta_e = 0
+    # if e0 >= -1*(sun_radius + atmos_refract):
+    #     Delta_e = (pressure / 1010.0) * (283.0 / (273.0 + temperature)) * 1.02 / (60.0 * np.tan(np.deg2rad(e0 + 10.3/(e0 + 5.11))))
+    # return e0 + Delta_e
+
     # eq 42
-    tmp = np.deg2rad(e0 + 10.3/(e0+5.11))
-    Delta_e = (pressure/1010.0)*(283.0/(273+temperature))*(1.02/(60*np.tan(tmp)))
+    Delta_e = (pressure / 1010.0) * (283.0 / (273.0 + temperature)) * 1.02 / (60.0 * np.tan(np.deg2rad(e0 + 10.3/(e0 + 5.11))))
     # eq 43
     if atmos_refract is None:
-        # our code path, assessing whether the sun is above the horizon after applying the correction
+        # our code path, check if the sun is above the horizon after applying the correction
         e = e0 + Delta_e
         if e < -sun_radius:
             # the sun is below the horizon, remove the correction
             e = e0
     else:
-        # spa.c code path, estimate whether the sun is above the horizon using atmos_refract
+        # spa.c logic, estimate whether the sun is above the horizon using atmos_refract
         if e0 < -1*(sun_radius + atmos_refract):
-            Delta_e = 0    
+            Delta_e = 0
         e = e0 + Delta_e
     return e
 
@@ -1276,7 +1288,6 @@ def _sun_topo_azimuth_zenith(latitude, delta_prime, H_prime, temperature, pressu
     temperature = average temperature in C (default is 14.6 = global average in 2013)
     pressure = average pressure in mBar (default 1013 = global average)
     """
-    SUN_RADIUS = 0.26667
     phi = np.deg2rad(latitude)
     delta_prime_rad, H_prime_rad = np.deg2rad(delta_prime), np.deg2rad(H_prime)
     
@@ -1284,11 +1295,12 @@ def _sun_topo_azimuth_zenith(latitude, delta_prime, H_prime, temperature, pressu
     e0 = np.rad2deg(np.arcsin(np.sin(phi)*np.sin(delta_prime_rad) + np.cos(phi)*np.cos(delta_prime_rad)*np.cos(H_prime_rad)))
 
     e = _atmospheric_correction(e0, temperature, pressure, atmos_refract)
+    Delta_e = e - e0
     theta = 90 - e
 
     Gamma = np.rad2deg(np.arctan2(np.sin(H_prime_rad), np.cos(H_prime_rad)*np.sin(phi) - np.tan(delta_prime_rad)*np.cos(phi))) % 360
     Phi = (Gamma + 180) % 360 #azimuth from north
-    return Phi, theta
+    return Phi, theta, e0, Delta_e
 
 @register_jitable
 def _norm_lat_lon(lat,lon):
@@ -1343,7 +1355,7 @@ def _sunpos(t, latitude, longitude, elevation, temperature, pressure, atmos_refr
     jd = _julian_day(t)
     latitude,longitude = _norm_lat_lon(latitude,longitude)
     alpha_prime, delta_prime, H_prime = _sun_topo_ra_decl_hour(latitude, longitude, elevation, jd, Delta_t)
-    Phi, theta = _sun_topo_azimuth_zenith(latitude, delta_prime, H_prime, temperature, pressure, atmos_refract)
+    Phi, theta, e0, Delta_e = _sun_topo_azimuth_zenith(latitude, delta_prime, H_prime, temperature, pressure, atmos_refract)
     return Phi, theta, alpha_prime, delta_prime, H_prime
 
 _sunpos_vec = np.vectorize(_sunpos)
@@ -1370,6 +1382,62 @@ def _sunpos_vec_jit(t, latitude, longitude, elevation, temperature, pressure, at
     Phi, theta = Phi.reshape(out_shape), theta.reshape(out_shape)
     alpha_prime, delta_prime, H_prime = alpha_prime.reshape(out_shape), delta_prime.reshape(out_shape), H_prime.reshape(out_shape)
     return Phi, theta, alpha_prime, delta_prime, H_prime
+
+def _intermediate_values_impl(t, latitude, longitude, elevation, temperature, pressure, atmos_refract, delta_t):
+    '''Return all intermediate values for testing purposes'''
+    
+    #Values is a dict with keys matching the table produced by generate_test_data.py
+    # NB: the meaning of atmos_refract in the parameters and atmos_refract in values are different:
+    #    parameters: atmos_refract is the atmospheric refraction correction at dawn/dusk
+    #    values: atmos_refract is the atmospheric refraction correction at t, the time of measurement
+    values = dict(t=t,lat=latitude,lon=longitude,elev=elevation,temp=temperature,pres=pressure,refract=atmos_refract,delta_t=delta_t)
+    # julian_day, julian_ephemeris_day, julian_ephemeris_century, julian_ephemeris_millennium
+    jd = _julian_day(t) 
+    jde = _julian_ephemeris_day(jd, delta_t)
+    jce = _julian_century(jde)
+    jme = _julian_millennium(jce)
+    values.update(julian_day=jd,julian_eph_day=jde,julian_eph_century=jce,julian_eph_millennium=jme)
+    # earth_heliocentric_longitude, earth_heliocentric_latitude, earth_radius_vector
+    L,B,R = _heliocentric_position(jme) 
+    values.update(earth_helio_lon=L,earth_helio_lat=B,earth_rad=R)
+    # geocentric_longitude, geocentric_latitude
+    Theta, beta = _geocentric_position((L,B,R))
+    values.update(geo_lon=Theta,geo_lat=beta)
+    # mean_elongation_moon_sun, mean_anomaly_sun, mean_anomaly_moon, argument_latitude_moon, ascending_longitude_moon,
+    x0, x1, x2, x3, x4 = np.rad2deg(_eqs15_19(jce))
+    values.update(mean_elongation=x0,mean_anomaly_sun=x1,mean_anomaly_moon=x2,arg_lat_moon=x3,asc_lon_moon=x4)
+    # nutation_longitude, ecliptic_obliquity
+    Delta_psi, epsilon = _nutation_obliquity(jce)
+    values.update(nutation_lon=Delta_psi,ecliptic_obliquity=epsilon)
+    # aberration_correction, apparent_sun_longitude, geocentric_latitude
+    Delta_tau = _abberation_correction(R)
+    lambda_, beta_2 = _sun_longitude((L,B,R), Delta_psi)
+    assert beta_2 == beta ## beta is already in values, so just make sure it's the same value
+    values.update(aberration_correction=Delta_tau, sun_lon=lambda_)
+    # greenwich_sidereal_time, geocentric_sun_right_ascension, geocentric_sun_declination
+    nu = _greenwich_sidereal_time(jd, Delta_psi, epsilon) 
+    alpha, delta = _sun_ra_decl(lambda_, epsilon, beta)
+    values.update(greenwich_sidereal_t=nu, geo_right_asc=alpha, geo_decl=delta)
+    # topo_sun_right_ascension, topo_sun_declination, topo_local_hour_angle
+    alpha_prime, delta_prime, H_prime = _sun_topo_ra_decl_hour(latitude, longitude, elevation, jd, delta_t)
+    values.update(topo_right_asc=alpha_prime, topo_decl=delta_prime, topo_hour=H_prime)
+    # topo_azimuth, topo_zenith, atmos_refract
+    Phi, theta, e0, Delta_e = _sun_topo_azimuth_zenith(latitude,delta_prime,H_prime,temperature,pressure,atmos_refract) 
+    values.update(topo_azimuth=Phi,topo_zenith=theta,topo_elevation_uncorrected=e0,atmos_refract=Delta_e)
+    #values we don't compute here:
+    # ecliptic_mean_obliquity,nutation_obliquity,greenwich_mean_sidereal_t,observer_hour,sun_horizontal_parallax,sun_right_asc_parallax,topo_elevation_uncorrected,topo_elevation,eq_of_t
+    return values
+
+_intermediate_values_jit = njit(_intermediate_values_impl)
+
+def _intermediate_values(t, latitude, longitude, elevation, temperature, pressure, atmos_refract, delta_t, *, jit=None):
+    t = time_to_datetime64(t).astype(np.int64)
+    if jit is None:
+        jit = _ENABLE_JIT
+    if jit:
+        return _intermediate_values_jit(t, latitude, longitude, elevation, temperature, pressure, atmos_refract, delta_t)
+    else:
+        return _intermediate_values_impl(t, latitude, longitude, elevation, temperature, pressure, atmos_refract, delta_t)
 
 if __name__ == '__main__':
     sys.exit(main())
