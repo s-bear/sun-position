@@ -13,7 +13,7 @@ The zenith angle is 0 at vertical and positive towards the horizon.
 The code is hosted at https://github.com/s-bear/sun-position
 
 The module is a single python file `sunposition.py` and may be used as a command-line utility or imported into a script.
-The module depends only on [NumPy](https://numpy.org) but can optionally use [Numba](https://numba.pydata.org/) for performance improvements.
+The module depends only on [NumPy](https://numpy.org) but can optionally use [Numba](https://numba.pydata.org/) and [SciPy](https://scipy.org) for performance improvements.
 
 ## Installation
 
@@ -27,13 +27,12 @@ $ pip install sunposition
 
 ```
 $ sunposition --help
-usage: sunposition [-h] [--test TEST] [--version] [--citation] [-t TIME] [-lat LATITUDE] [-lon LONGITUDE] [-e ELEVATION] [-T TEMPERATURE] [-p PRESSURE] [-a ATMOS_REFRACT] [-dt DT] [-r] [--csv] [--jit]
+usage: sunposition [-h] [--version] [--citation] [-t TIME] [-lat LATITUDE] [-lon LONGITUDE] [-e ELEVATION] [-T TEMPERATURE] [-p PRESSURE] [-a ATMOS_REFRACT] [-dt DT] [-r] [--csv] [--jit]
 
 Compute sun position parameters given the time and location
 
 options:
   -h, --help            show this help message and exit
-  --test TEST           Test against output from https://midcdmz.nrel.gov/solpos/spa.html
   --version             show program's version number and exit
   --citation            Print citation information
   -t TIME, --time TIME  "now" or date and time in ISO8601 format or a (UTC) POSIX timestamp
@@ -48,27 +47,27 @@ options:
   -p PRESSURE, --pressure PRESSURE
                         atmospheric pressure, in millibar
   -a ATMOS_REFRACT, --atmos_refract ATMOS_REFRACT
-                        atmospheric refraction at sunrise and sunset, in degrees
+                        Atmospheric refraction at sunrise and sunset, in degrees. Omit to compute automatically, spa.c uses 0.5667
   -dt DT                difference between earth's rotation time (TT) and universal time (UT1)
   -r, --radians         Output in radians instead of degrees
   --csv                 Comma separated values (time,dt,lat,lon,elev,temp,pressure,az,zen,RA,dec,H)
   --jit                 Enable Numba acceleration (likely to cause slowdown for a single computation!)
 
 $ sunposition
-Computing sun position at T = 2025-01-15T06:26:55.969Z + 0.0 s
+Computing sun position at T = 2025-02-03T05:13:53.608472Z + 0.0 s
 Lat, Lon, Elev = 51.48 deg, 0.0 deg, 0 m
 T, P = 14.6 C, 1013.0 mbar
 Results:
-Azimuth, zenith = 106.729483 deg, 103.700963 deg
-RA, dec, H = 297.315158 deg, -21.068459 deg, -85.618177 deg
+Azimuth, zenith = 88.915691 deg, 112.077238 deg
+RA, dec, H = 317.087980 deg, -16.448005 deg, -104.973487 deg
 
 $ sunposition -t "1953-05-29 05:45:00" -lat 27.9881 -lon 86.9253 -e 8848
-Computing sun position at T = 1953-05-29T05:45:00.000Z + 0.0 s
+Computing sun position at T = 1953-05-29T05:45:00Z + 0.0 s
 Lat, Lon, Elev = 27.9881 deg, 86.9253 deg, 8848.0 m
 T, P = 14.6 C, 1013.0 mbar
 Results:
-Azimuth, zenith = 137.736768 deg, 8.481270 deg
-RA, dec, H = 65.760501 deg, 21.576417 deg, 353.875172 deg
+Azimuth, zenith = 137.735174 deg, 8.480987 deg
+RA, dec, H = 65.760501 deg, 21.576785 deg, 353.875172 deg
 ```
 
 An example test file is provided at https://raw.githubusercontent.com/s-bear/sun-position/master/sunposition_test.txt
@@ -125,10 +124,15 @@ plt.show() #unnecessary in interactive sessions
 
 ```
 
-## Citation
-Ibrahim Reda, Afshin Andreas, Solar position algorithm for solar radiation applications, Solar Energy, Volume 76, Issue 5, 2004, Pages 577-589, ISSN 0038-092X, http://dx.doi.org/10.1016/j.solener.2003.12.003.
+## Citations
+Ibrahim Reda and Afshin Andreas, "Solar position algorithm for solar radiation applications," Solar Energy, Volume 76, Issue 5, 2004, Pages 577-589, ISSN 0038-092X, [https://dx.doi.org/10.1016/j.solener.2003.12.003](doi: 10.1016/j.solener.2003.12.003).
 Keywords: Global solar irradiance; Solar zenith angle; Solar azimuth angle; VSOP87 theory; Universal time; ΔUT1
 
+Ibrahim Reda and Afshin Andreas, “Corrigendum to ‘Solar position algorithm for solar radiation applications’ [Solar Energy 76 (2004) 577–589],” Solar Energy, vol. 81, no. 6, p. 838, Jun. 2007, [https://dx.doi.org/10.1016/j.solener.2007.01.003](doi: 10.1016/j.solener.2007.01.003).
+
+Cassio Neri and Lorenz Schneider, “Euclidean affine functions and their application to calendar algorithms,” Software: Practice and Experience, vol. 53, no. 4, pp. 937–970, Apr. 2023, [https://dx.doi.org/10.1002/spe.3172](doi: 10.1002/spe.3172).
+
+ 
 # LICENSE
 
 Copyright (c) 2025 Samuel Bear Powell, samuel.powell@uq.edu.au

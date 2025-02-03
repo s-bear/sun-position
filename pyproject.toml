@@ -1,3 +1,72 @@
 [build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sunposition"
+dynamic = ["version"]
+description = "Compute the sun's observed position based on Reda & Adreas's 2004 paper \"Solar position algorithm for solar radiation applications\""
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.8"
+authors = [
+    { name = "Samuel Powell", email = "samuel.powell@uq.edu.au" },
+]
+keywords = [
+    "astronomy",
+    "solar",
+    "sun",
+]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Astronomy",
+]
+dependencies = ["numpy>=1.10"]
+
+[project.optional-dependencies]
+jit = ["numba>=0.22", "scipy"]
+
+[project.scripts]
+sunposition = "sunposition:main"
+
+[project.urls]
+Homepage = "https://github.com/s-bear/sun-position"
+
+[tool.hatch.version]
+path = "sunposition.py"
+
+[tool.hatch.build.targets.sdist]
+ignore-vcs = true
+include = ["/sunposition.py"]
+
+[tool.hatch.build.targets.wheel]
+pure-python = true
+
+[publish.index.repos.main]
+url = "https://upload.pypi.org/legacy/"
+
+[publish.index.repos.test]
+url = "https://test.pypi.org/legacy/"
+
+[tool.pytest.ini_options]
+addopts = ["--import-mode=importlib"]
+
+# Note that the hatch-test.matrix can't select features directly
+# instead we add an arbitrary variable (here, select) and use the
+# environment overrides to set the feature:
+
+[tool.hatch.envs.hatch-test.overrides]
+matrix.select.features = [{value="jit", if = ["jit"]}]
+
+[[tool.hatch.envs.hatch-test.matrix]]
+python = ["3.13","3.12","3.11","3.10","3.9","3.8"]
+select = ["no-jit","jit"]
