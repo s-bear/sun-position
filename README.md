@@ -125,6 +125,11 @@ plt.show() #unnecessary in interactive sessions
 
 ```
 
+## Running Tests
+The tests are written using `pytest`, with the test environment controlled by [`Hatch`](https://hatch.pypa.io/latest/).
+Run `hatch test` in the `sunposition` source directory to run the test suite. Use `hatch test --all` to run the tests
+on the Python versions specified in `pyproject.toml` test matrix.
+
 ## Citations
 Ibrahim Reda and Afshin Andreas, "Solar position algorithm for solar radiation applications," Solar Energy, Volume 76, Issue 5, 2004, Pages 577-589, ISSN 0038-092X, [doi: 10.1016/j.solener.2003.12.003](https://dx.doi.org/10.1016/j.solener.2003.12.003).
 Keywords: Global solar irradiance; Solar zenith angle; Solar azimuth angle; VSOP87 theory; Universal time; ΔUT1
