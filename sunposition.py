@@ -139,12 +139,17 @@ def main(args=None, **kwargs):
 def enable_jit(en = True):
     global _ENABLE_JIT
     if en and numba is None:
-        print('WARNING: JIT unavailable (requires numba and scipy)',file=sys.stderr)
+        warnings.warn('JIT unavailable (requires numba and scipy)',stacklevel=2)
     #We set the _ENABLE_JIT flag regardless of whether numba is available, just to test that code path!
     _ENABLE_JIT = en
 
 def disable_jit():
     enable_jit(False)
+
+def jit_enabled():
+    if _ENABLE_JIT:
+        return _jit_test()
+    return False
 
 def arcdist(p0, p1, *, radians=False, jit=None):
     """Angular distance between azimuth,zenith pairs
@@ -243,6 +248,7 @@ def julian_day(dt, *, jit=None):
     t = datetime_to_timestamp(dt)
     if jit is None: jit = _ENABLE_JIT
     if jit:
+        _jit_check()
         jd = _julian_day_vec_jit(t)
     else:
         jd = _julian_day_vec(t)
@@ -292,6 +298,7 @@ def sunposition(dt, latitude, longitude, elevation, temperature=None, pressure=N
 
     if jit:
         args = np.broadcast_arrays(t, latitude, longitude, elevation, temperature, pressure, delta_t, atmos_refract)
+        _jit_check()
         for a in args: a.flags.writeable = False
         sp = _sunpos_vec_jit(*args)
         sp = tuple(a[()] for a in sp) #unwrap np.array() from scalars
@@ -330,6 +337,7 @@ def topocentric_sunposition(dt, latitude, longitude, elevation, delta_t=0, *, ra
         jit = _ENABLE_JIT
     t = datetime_to_timestamp(dt)
     if jit:
+        _jit_check()
         args = np.broadcast_arrays(t, latitude, longitude, elevation, delta_t)
         for a in args: a.flags.writeable = False
         sp = _topo_sunpos_vec_jit(*args)
@@ -515,6 +523,27 @@ else:
     overload = lambda *a,**k: _empty_decorator
     register_jitable = _empty_decorator
     _ENABLE_JIT = False
+
+## machinery for jit_enabled()
+
+def _jit_test_impl():
+    #return False if within Python
+    return False
+
+@overload(_jit_test_impl)
+def _jit_test_impl_jit():
+    def _jit_test_impl_jit():
+        #return True if within JIT'ed code
+        return True
+    return _jit_test_impl_jit
+
+@njit
+def _jit_test():
+    return _jit_test_impl()
+
+def _jit_check():
+    if not _jit_test():
+        warnings.warn('JIT requested, but numba is not available!')
 
 ## arcdist ##
 
