@@ -126,12 +126,12 @@ plt.show() #unnecessary in interactive sessions
 ```
 
 ## Citations
-Ibrahim Reda and Afshin Andreas, "Solar position algorithm for solar radiation applications," Solar Energy, Volume 76, Issue 5, 2004, Pages 577-589, ISSN 0038-092X, [https://dx.doi.org/10.1016/j.solener.2003.12.003](doi: 10.1016/j.solener.2003.12.003).
+Ibrahim Reda and Afshin Andreas, "Solar position algorithm for solar radiation applications," Solar Energy, Volume 76, Issue 5, 2004, Pages 577-589, ISSN 0038-092X, [doi: 10.1016/j.solener.2003.12.003](https://dx.doi.org/10.1016/j.solener.2003.12.003).
 Keywords: Global solar irradiance; Solar zenith angle; Solar azimuth angle; VSOP87 theory; Universal time; ΔUT1
 
-Ibrahim Reda and Afshin Andreas, “Corrigendum to ‘Solar position algorithm for solar radiation applications’ [Solar Energy 76 (2004) 577–589],” Solar Energy, vol. 81, no. 6, p. 838, Jun. 2007, [https://dx.doi.org/10.1016/j.solener.2007.01.003](doi: 10.1016/j.solener.2007.01.003).
+Ibrahim Reda and Afshin Andreas, “Corrigendum to ‘Solar position algorithm for solar radiation applications’ [Solar Energy 76 (2004) 577–589],” Solar Energy, vol. 81, no. 6, p. 838, Jun. 2007, [doi: 10.1016/j.solener.2007.01.003](https://dx.doi.org/10.1016/j.solener.2007.01.003).
 
-Cassio Neri and Lorenz Schneider, “Euclidean affine functions and their application to calendar algorithms,” Software: Practice and Experience, vol. 53, no. 4, pp. 937–970, Apr. 2023, [https://dx.doi.org/10.1002/spe.3172](doi: 10.1002/spe.3172).
+Cassio Neri and Lorenz Schneider, “Euclidean affine functions and their application to calendar algorithms,” Software: Practice and Experience, vol. 53, no. 4, pp. 937–970, Apr. 2023, [doi: 10.1002/spe.3172](https://dx.doi.org/10.1002/spe.3172).
 
  
 # LICENSE
