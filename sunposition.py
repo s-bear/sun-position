@@ -181,60 +181,66 @@ def arcdist(p0, p1, *, radians=False, jit=None):
         if jit: return _arcdist_deg_jit(p0,p1)
         else: return _arcdist_deg(p0,p1)
 
-def datetime_to_timestamp(dt):
-    '''Convert various date/time formats to POSIX timestamps.
+_np_microseconds = np.dtype('datetime64[us]')
 
-    dt is a datetime.datetime: uses dt.timestamp(), which uses the
-        local timezone by default. To avoid timezone errors, use timezone aware
-        datetime functionality when possible.
+def time_to_datetime64(t):
+    '''Convert various date/time formats to microsecond `numpy.datetime64`.
     
-    dt is a numpy.datetime64: converts to POSIX timestamps with 
-        microsecond precision: dt.astype('datetime64[us]').astype(np.int64)/1e6
+    When parameter `t` is a numeric type, it is assumed to be a POSIX-style 
+    timestamp, in seconds since the 1970-01-01 epoch.
     
-    dt is a str: accepts 3 formats of string:
-        'now' : uses time.time() to return the current timestamp
-        floating point : parsed using float(dt)
-        ISO 8601 : a standard ISO date-time string, with some variation accepted
-                   eg. '2024-04-08T11:09:34-07:00', '2024-04-08 11:09:34-07:00',
-                       '20240408 110934-07', '20240408T180934.000Z', all 
-                       produce the same timestamp
-    
+    When `t` contains `datetime.datetime`s they're converted to UTC first using 
+    `datetime.datetime.astimezone(datetime.timezone.utc)`, which assumes the
+    datetime is in local time if it's not timezone aware.
+
+    When `t` contains `str`s they're parsed per ISO 8601, with some variations
+    accepted. Notable, "now" uses `time.time_ns()` to obtain the current time.
+    The parser uses approximately the following grammar:
+        <DATETIME> := <DATE> ('T'|' ') <TIME> [<TIMEZONE>]
+        <DATE> := ['+'|'-'] <YEAR> ['-'|'/'] <MONTH> ['-'|'/'] <DAY>
+        <TIME> := <HOUR> [':'] <MINUTE> [[':'] <SECOND>]
+        <TIMEZONE> := 'Z' | ('+'|'-') <HOUR> [[':'] <MINUTE>]
+    Note that <YEAR> is a 0-padded 4-digit number, <MONTH>, <DAY>, <HOUR>, and
+    <MINUTE> are similarly 0-padded 2-digit numbers. <SECOND> is a 0-padded
+    2-digit number with an optional fractional part: '01' and '01.234' are both
+    valid <SECOND>s. <YEAR>, <MONTH>, and <DAY> may be fewer digits when the
+    separators (- or /) them are included, which eliminates any ambiguity.
+
     Parameters
     ----------
-    dt : array_like of datetime.datetime, numpy.datetime64, ISO 8601 strings
-        date/times to convert to POSIX timestamps. 
+    t : array_like of various date/time formats
     
     Returns
     -------
-    t : ndarray
-        dt converted to POSIX timestamps, or if dt is not one of the listed formats
-        it is returned unchanged.
+    t_microseconds : array of datetime64[us]
     '''
-    dt = np.asarray(dt)
-    # [()] unwrap scalar values out of np.array
-    if np.issubdtype(dt.dtype, str):
-        t = _string_to_posix_time_vec(dt)[()]
-    elif np.issubdtype(dt.dtype, datetime.datetime):
-        t = _get_timestamp(dt)[()]
-    elif np.issubdtype(dt.dtype, np.datetime64):
-        t = (dt.astype('datetime64[us]').astype(np.int64)/1e6)[()]
-    else:
-        t = dt
-    return t 
-
-def timestamp_to_iso8601(t):
-    '''Convert POSIX timestamps to ISO8601 timestamp strings'''
     t = np.asarray(t)
-    s = _posix_time_to_string_vec(t)
+    # [()] unwrap scalar values out of np.array
+    if np.issubdtype(t.dtype, np.datetime64):
+        #NB: issubdtype can't differentiate between different units of datetime64
+        #  ie. it says datetime64[s] is the same as datetime64[us]
+        return t.astype(_np_microseconds)[()]
+    elif np.issubdtype(t.dtype, str):
+        return _time_string_to_i64_vec(t).astype(_np_microseconds)[()]
+    elif np.issubdtype(t.dtype, datetime.datetime):
+        return _time_datetime_to_datetime64(t).astype(_np_microseconds)[()]
+    else:
+        #assume posix timestamp (seconds)
+        return np.round(t*1e6).astype(_np_microseconds)[()]
+
+def time_to_iso8601(t):
+    '''Convert various date/time formats to ISO8601 timestamp strings'''
+    t = time_to_datetime64(t)
+    s = _time_i64_to_string_vec(t.astype(np.int64))
     if s.shape == (): return str(s)
     return s
 
-def julian_day(dt, *, jit=None):
+def julian_day(t, *, jit=None):
     """Convert timestamps from various formats to Julian days
 
     Parameters
     ----------
-    dt : array_like
+    t : array_like
         datetime.datetime, numpy.datetime64, ISO8601 strings, or POSIX timestamps (str, float, int)
     jit : bool or None
         override module jit settings, to True/False to enable/disable numba acceleration
@@ -245,21 +251,21 @@ def julian_day(dt, *, jit=None):
         datetimes converted to fractional Julian days
     """
 
-    t = datetime_to_timestamp(dt)
+    t = time_to_datetime64(t).astype(np.int64)
     if jit is None: jit = _ENABLE_JIT
     if jit:
         _jit_check()
         jd = _julian_day_vec_jit(t)
     else:
-        jd = _julian_day_vec(t)
-    return jd[()] # use [()] to "unwrap" scalar values out of np.array
+        jd = _julian_day_vec(t)[()]
+    return jd
 
-def sunposition(dt, latitude, longitude, elevation, temperature=None, pressure=None, atmos_refract=None, delta_t=0, *, radians=False, jit=None):
+def sunposition(t, latitude, longitude, elevation, temperature=None, pressure=None, atmos_refract=None, delta_t=0, *, radians=False, jit=None):
     """Compute the observed and topocentric coordinates of the sun as viewed at the given time and location.
 
     Parameters
     ----------
-    dt : array_like of datetime, datetime64, str, or float
+    t : array_like of datetime, datetime64, str, or float
         datetime.datetime, numpy.datetime64, ISO8601 strings, or POSIX timestamps (float or int)
     latitude, longitude : array_like of float
         decimal degrees, positive for north of the equator and east of Greenwich
@@ -294,27 +300,27 @@ def sunposition(dt, latitude, longitude, elevation, temperature=None, pressure=N
     if jit is None:
         jit = _ENABLE_JIT
 
-    t = datetime_to_timestamp(dt)
+    t = time_to_datetime64(t).astype(np.int64)
 
     if jit:
-        args = np.broadcast_arrays(t, latitude, longitude, elevation, temperature, pressure, delta_t, atmos_refract)
         _jit_check()
+        args = np.broadcast_arrays(t, latitude, longitude, elevation, temperature, pressure, atmos_refract, delta_t)
         for a in args: a.flags.writeable = False
         sp = _sunpos_vec_jit(*args)
         sp = tuple(a[()] for a in sp) #unwrap np.array() from scalars
     else:
-        sp = _sunpos_vec(t, latitude, longitude, elevation, temperature, pressure, delta_t, atmos_refract)
+        sp = _sunpos_vec(t, latitude, longitude, elevation, temperature, pressure, atmos_refract, delta_t)
     if radians:
         sp = tuple(np.deg2rad(a) for a in sp)
+    az, zen, ra, dec, ha = sp
+    return az[()], zen[()], ra[()], dec[()], ha[()]
 
-    return sp
-
-def topocentric_sunposition(dt, latitude, longitude, elevation, delta_t=0, *, radians=False, jit=None):
+def topocentric_sunposition(t, latitude, longitude, elevation, delta_t=0, *, radians=False, jit=None):
     """Compute the topocentric coordinates of the sun as viewed at the given time and location.
 
     Parameters
     ----------
-    dt : array_like of datetime, datetime64, str, or float
+    t : array_like of datetime, datetime64, str, or float
         datetime.datetime, numpy.datetime64, ISO8601 strings, or POSIX timestamps (float or int)
     latitude, longitude : array_like of float
         decimal degrees, positive for north of the equator and east of Greenwich
@@ -335,7 +341,7 @@ def topocentric_sunposition(dt, latitude, longitude, elevation, delta_t=0, *, ra
     """
     if jit is None:
         jit = _ENABLE_JIT
-    t = datetime_to_timestamp(dt)
+    t = time_to_datetime64(t).astype(np.int64)
     if jit:
         _jit_check()
         args = np.broadcast_arrays(t, latitude, longitude, elevation, delta_t)
@@ -348,12 +354,12 @@ def topocentric_sunposition(dt, latitude, longitude, elevation, delta_t=0, *, ra
         sp = tuple(np.deg2rad(a) for a in sp)
     return sp
 
-def observed_sunposition(dt, latitude, longitude, elevation, temperature=None, pressure=None, atmos_refract=None, delta_t=0, *, radians=False, jit=None):
+def observed_sunposition(t, latitude, longitude, elevation, temperature=None, pressure=None, atmos_refract=None, delta_t=0, *, radians=False, jit=None):
     """Compute the observed coordinates of the sun as viewed at the given time and location.
 
     Parameters
     ----------
-    dt : array_like of datetime, datetime64, str, or float
+    t : array_like of datetime, datetime64, str, or float
         datetime.datetime, numpy.datetime64, ISO8601 strings, or POSIX timestamps (float or int)
     latitude, longitude : array_like of float
         decimal degrees, positive for north of the equator and east of Greenwich
@@ -377,7 +383,7 @@ def observed_sunposition(dt, latitude, longitude, elevation, temperature=None, p
     azimuth_angle : ndarray, measured eastward from north
     zenith_angle : ndarray, measured down from vertical
     """
-    return sunpos(dt, latitude, longitude, elevation, temperature, pressure, atmos_refract, delta_t, radians, jit)[:2]
+    return sunpos(t, latitude, longitude, elevation, temperature, pressure, atmos_refract, delta_t, radians=radians, jit=jit)[:2]
 
 sunpos = sunposition
 topocentrict_sunpos = topocentric_sunposition
@@ -577,55 +583,14 @@ _arcdist_deg_jit = njit(_arcdist_deg)
 #  ISO8601 string
 
 @register_jitable
-def _date_to_rd(year, month, day):
-    '''Convert year, month, day to rata die (day number)
-    Based on the algorithm in: "Euclidean affine functions and their application to calendar algorithms" C. Neri, L. Schneider (2022) https://doi.org/10.1002/spe.3172
-    day may be fractional, fractional part is added to return value
-    '''
-    # we include explicit types everywhere to match the reference implementation, which is all 32-bit
-    # Python will still use 64-bit math for some of the intermediate calculations, but it shouldn't change the results
-    Y_G = np.int32(year)
-    M_G = np.uint32(month)
-    D_G = np.uint32(day)
-    tod = day - D_G #split fractional part
-
-    s = np.uint32(82) #static uint32_t constexpr s = 82;
-    K = np.uint32(719468 + 146097 * s) #static uint32_t constexpr K = 719468 + 146097 * s;
-    L = np.uint32(400*s) #static uint32_t constexpr L = 400 * s;
-    #  int32_t to_rata_die(int32_t Y_G, uint32_t M_G, uint32_t D_G) {
-    # Map. (Notice the year correction, including type change.)
-    J = (M_G <= 2) # uint32_t const J = M_G <= 2;
-    Y = np.uint32(Y_G + L - J) # uint32_t const Y = (uint32_t(Y_G) + L) - J;
-    # uint32_t const M = J ? M_G + 12 : M_G;
-    if J: 
-        M = np.uint32(M_G + 12)
-    else:
-        M = M_G
+def _time_day_to_date(day_number):
+    '''convert integer day number to Gregorian (year, month, day)
+    year,month,day are int32, uint8, uint8
     
-    D = np.uint32(D_G - 1) # uint32_t const D = D_G - 1;
-    C = np.uint32(Y // 100) # uint32_t const C = Y / 100;
-
-    # Rata die.
-    y_star = np.uint32(1461 * Y // 4 - C + C // 4) # uint32_t const y_star = 1461 * Y / 4 - C + C / 4;
-    m_star = np.uint32((979 * M - 2919) // 32) # uint32_t const m_star = (979 * M - 2919) / 32;
-    N      = np.uint32(y_star + m_star + D) # uint32_t const N      = y_star + m_star + D;
-    
-    # Rata die shift.
-    N_U = np.int32(N) - np.int32(K) # uint32_t const N_U = N - K; -- the original casts to int32 at return, we do it here
-    return N_U + tod
-
-@register_jitable
-def _date_to_posix_time(year, month, day):
-    return _date_to_rd(year, month, day)*86400 # rata die (fractional day number) x 86400 seconds per day
-
-@register_jitable
-def _rd_to_date(rd):
-    '''convert integer rata die (day number) to year, month, day
     "Euclidean affine functions and their application to calendar algorithms" C. Neri, L. Schneider (2022) https://doi.org/10.1002/spe.3172
     '''
     #  date32_t to_date(int32_t N_U) {
-    N_U = np.int32(rd)
-    tod = rd - N_U #split fractional part
+    N_U = np.int32(day_number)
 
     s = np.uint32(82) #static uint32_t constexpr s = 82;
     K = np.uint32(719468 + 146097 * s) #static uint32_t constexpr K = 719468 + 146097 * s;
@@ -663,106 +628,199 @@ def _rd_to_date(rd):
     Y_G = np.int32(Y) - np.int32(L) + np.int32(J) # int32_t  const Y_G = (Y - L) + J;
     # uint32_t const M_G = J ? M - 12 : M;
     if J:
-        M_G = np.uint32(M - 12)
+        M_G = np.uint8(M - 12) #we use uint8 instead of uint32
     else:
-        M_G = M
+        M_G = np.uint8(M)
 
-    D_G = np.uint32(D + 1) # uint32_t const D_G = D + 1;
+    D_G = np.uint8(D + 1) # uint32_t const D_G = D + 1;
     # return { Y_G, M_G, D_G };
-    return (Y_G, M_G, D_G + tod)
+    return (Y_G, M_G, D_G)
 
 @register_jitable
-def _posix_time_to_date(t):
-    '''POSIX timestamp to (year, month, day)'''
-    return _rd_to_date(t/86400) # (timestamp in seconds)/86400 -> rata die (fractional day number)
+def _time_i64_to_datetime(t_microseconds):
+    '''Convert int64 timestamp to (year,month,day,hour,minute,second,micros)
+    t_microseconds : microseconds since 1970-1-1
+    '''
+    # divide by number of microseconds in a day
+    day_number, micros = divmod(t_microseconds,86400000000)
+    # use Neri-Schneider calendar algorithm to get Gregorian date
+    year,month,day = _time_day_to_date(day_number)
+    # divide micros to get hour,minute,second
+    hour, micros = divmod(micros, 3600000000)
+    minute, micros = divmod(micros, 60000000)
+    second, micros = divmod(micros, 1000000)
+    hour, minute, second = np.uint8(hour), np.uint8(minute), np.uint8(second)
+    micros = np.uint32(micros)
+    return year,month,day,hour,minute,second,micros
 
 @register_jitable
-def _posix_time_to_datetime(t):
-    '''POSIX timestamp to (year, month, day, hour, minute, second, milliseconds)'''
-    year, month, fday = _posix_time_to_date(t)
-    day = int(fday)
-    ms = round((fday - day)*86400000) #milliseconds into the day
-    hour, ms = divmod(ms, 3600000) #hour, ms into the hour
-    minute, ms = divmod(ms, 60000) #minute, ms into the minute
-    sec, ms = divmod(ms, 1000) #second, millisecond
-    return (year, month, day, hour, minute, sec, ms)
+def _time_date_to_day(date_tuple):
+    '''convert Gregorian (year, month, day) to day number
+    date_tuple : (int32, uint8, uint8) : year,month,day
+    returns day_number : int32
+    
+    "Euclidean affine functions and their application to calendar algorithms" C. Neri, L. Schneider (2022) https://doi.org/10.1002/spe.3172
+    '''
+    year,month,day = date_tuple[:3]
+    Y_G = np.int32(year)
+    M_G = np.uint32(month)
+    D_G = np.uint32(day)
 
-_iso8601_re = re.compile(r'([+-]?\d{1,4})-?([01]\d)-?([0-3]\d)[T ]([012]\d):?([0-6]\d):?([0-6]\d(?:\.\d+)?)?(?:Z|(?:([+-]\d{2})(?::?(\d{2}))?))?')
-def _string_to_posix_time(s):
-    '''parse timestamp string to posix time, assumes UTC if timezone is not specified
+    s = np.uint32(82) #static uint32_t constexpr s = 82;
+    K = np.uint32(719468 + 146097 * s) #static uint32_t constexpr K = 719468 + 146097 * s;
+    L = np.uint32(400*s) #static uint32_t constexpr L = 400 * s;
+    #  int32_t to_rata_die(int32_t Y_G, uint32_t M_G, uint32_t D_G) {
+    # Map. (Notice the year correction, including type change.)
+    J = (M_G <= 2) # uint32_t const J = M_G <= 2;
+    Y = np.uint32(Y_G + L - J) # uint32_t const Y = (uint32_t(Y_G) + L) - J;
+    # uint32_t const M = J ? M_G + 12 : M_G;
+    if J: 
+        M = np.uint32(M_G + 12)
+    else:
+        M = M_G
+    
+    D = np.uint32(D_G - 1) # uint32_t const D = D_G - 1;
+    C = np.uint32(Y // 100) # uint32_t const C = Y / 100;
+
+    # Rata die.
+    y_star = np.uint32(1461 * Y // 4 - C + C // 4) # uint32_t const y_star = 1461 * Y / 4 - C + C / 4;
+    m_star = np.uint32((979 * M - 2919) // 32) # uint32_t const m_star = (979 * M - 2919) / 32;
+    N      = np.uint32(y_star + m_star + D) # uint32_t const N      = y_star + m_star + D;
+    
+    # Rata die shift.
+    N_U = np.int32(N) - np.int32(K) # uint32_t const N_U = N - K; -- the original casts to int32 at return, we do it here
+    return N_U
+
+@register_jitable
+def _time_datetime_to_i64(datetime_tuple):
+    '''Convert datetime_tuple to int64 timestamp
+    datetime_tuple : (int32, uint8, uint8, uint8, uint8, uint8, uint32)
+        year,month,day,hour,minute,second,microsecond
+    returns t : int64, microseconds since epoch 1970-01-01
+    
+    Does not check for valid dates
+    '''
+    year,month,day,hour,minute,second,microsecond = datetime_tuple[:7]
+    # accumulate parts
+    t = np.int64(microsecond)
+    t += np.int64(second)*1000000
+    t += np.int64(minute)*60000000
+    t += np.int64(hour)*3600000000
+    t += np.int64(_time_date_to_day((year,month,day)))*86400000000
+    return t
+
+@register_jitable
+def _time_datetime_to_i64_checked(datetime_tuple):
+    '''Convert year,month,day,hour,minute second,microsecond to int64 timestamp, with validity check
+    year,month,day : int32, uint8, uint8
+    hour,minute,second,microsecond: uint8, uint8, uint8, uint32
+
+    Throws a ValueError if the date & time are not valid in the Gregorian calendar
+
+    return t : int64, microseconds since the epoch 1970-01-01
+    '''
+    t = _time_datetime_to_i64(datetime_tuple)
+    datetime_tuple_valid = _time_i64_to_datetime(t)
+    if datetime_tuple != datetime_tuple_valid:
+        raise ValueError('Invalid date')
+    return t
+
+#                          (  (DATE, NO SEPARATORS            )|(DATE, WITH SEPARATORS                      ))(TIME                                                (TIMEZONE                         ) )
+#                                (1:YEAR    )(2:MONTH)(3:DAY )     (4: YEAR     )(5)   (6:MONTH)   (7:  DAY)         (8: HOUR)  (9: MIN )     (10: SECOND       )          (11:TZHOUR)     (12:TZMIN)
+_iso8601_re = re.compile(r'(?:(?:([+-]?\d{4})([01]\d)([0-3]\d))|(?:([+-]?\d{1,4})([-/])([01]?\d)\5([0-3]?\d)))(?:[T ]([012]\d):?([0-5]\d)(?::?([0-6]\d(?:\.\d*)?))?(?:Z|(?:([+-]\d{2})(?::?(\d{2}))?))?)?')
+def _time_string_to_i64(s):
+    '''parse timestamp string to integer microsecond timestamp, assumes UTC if timezone is not specified
     strings may be:
      - "now" -- which gets the current time
-     - POSIX timestamp string
-     - ISO 8601 formatted string (including negative years)
+     - POSIX timestamp string (seconds since epoch, including fractional part)
+     - ISO 8601 formatted string (including negative years, fractional seconds)
     '''
     if s == 'now':
-        return time.time()
+        return time.time_ns()//1000
     try:
-        return float(s)
+        t = float(s)
+        #if np.abs(t - np.nextafter(t,0)) > 1e-6: warnings.warn('Timestamp resolution greater than 1 microsecond.')
+        return round(float(s)*1e6)
     except ValueError: #
         pass
-    m = _iso8601_re.match(s)
-    if not m:
+    match = _iso8601_re.fullmatch(s)
+    if not match:
         raise ValueError('Could not parse timestamp string (must be "now" or float or ISO8601)')
-    year,month,day,hour,minute,second,tz_hour,tz_minute = m.groups()
+    year,month,day,year2,sep,month2,day2,hour,minute,second,tz_hour,tz_minute = match.groups()
+    if year is None: year,month,day = year2,month2,day2
     if second is None: second = 0
     if tz_hour is None: tz_hour = 0
     if tz_minute is None: tz_minute = 0
+    if year is None or month is None or day is None or hour is None or minute is None:
+        raise ValueError('Could not parse timestamp string (must be "now" or float or ISO8601)')
     year, month, day = int(year),int(month),int(day)
-    hour,minute,second = int(hour), int(minute), float(second)
-    tod = (hour + (minute + second/60)/60)/24 # time of day, in days
+    hour,minute,micros = int(hour), int(minute), round(float(second)*1e6)
+    second,micros = divmod(micros,1000000)
     tz_hour, tz_minute = int(tz_hour), int(tz_minute)
-    if tz_hour < 0:
-        tz = tz_hour - tz_minute/60 # timezone offset, in hours
-    else:
-        tz = tz_hour + tz_minute/60 # timezone offset, in hours
-    rd = _date_to_rd(year, month, day) #to rata die
-    #validate the date using _rd_to_date(_date_to_rd()) round trip
-    if _rd_to_date(rd) != (year, month, day):
-        raise ValueError(f'Invalid date: "{year:04}-{month:02}-{day:02}"')
-    if tod >= 1:
-        raise ValueError(f'Invalid time: "{hour:02}:{minute:02}:{second:09.6f}"')
-    # UTC offsets vary from -12:00 (US Minor Outlying Islands) to +14:00 (Kiribati)
-    if tz < -12 or tz > 14:
+    if tz_minute < 0 or tz_minute >= 60:
         raise ValueError(f'Invalid timezone: "{tz_hour:02}:{tz_minute:02}"')
-    #apply tod and tz to rd & multiply by seconds per day
-    return 86400*(rd + tod - tz/24)
+    if tz_hour < 0: tz_minute = -tz_minute
+    tz_micros = (tz_hour*3600 + tz_minute*60)*1000000 # timezone offset, in microseconds
+    # UTC offsets vary from -12:00 (US Minor Outlying Islands) to +14:00 (Kiribati)
+    tz_min, tz_max = -12*3600*1000000, 14*3600*1000000
+    if tz_micros < tz_min or tz_micros > tz_max:
+        raise ValueError(f'Invalid timezone: "{tz_hour:02}:{tz_minute:02}"')
+    #convert to timestamp
+    t = _time_datetime_to_i64_checked((year,month,day,hour,minute,second,micros))
+    #apply timezone offset and return
+    return t - tz_micros
 
-_string_to_posix_time_vec = np.vectorize(_string_to_posix_time)
+_time_string_to_i64_vec = np.vectorize(_time_string_to_i64)
 
-def _posix_time_to_string(t):
-    '''Format a POSIX timestamp as ISO8601 with millisecond precision'''
-    #we need our own because datetime.datetime.fromtimestamp() doesn't support dates before epoch
-    year, month, day, hour, minute, sec, ms = _posix_time_to_datetime(t)
-    return f'{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{sec:02}.{ms:03}Z'
+def _time_i64_to_string(t):
+    '''Format a microsecond timestamp as an ISO8601 string'''
+    year, month, day, hour, minute, sec, micros = _time_i64_to_datetime(t)
+    millis, micros = divmod(micros,1000)
+    if millis:
+        if micros: fsec = f'.{millis:03}{micros:03}'
+        else: fsec = f'.{millis:03}'
+    else:
+        if micros: fsec = f'.000{micros:03}'
+        else: fsec = ''
+    
+    return f'{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{sec:02}{fsec}Z'
 
-_posix_time_to_string_vec = np.vectorize(_posix_time_to_string)
+_time_i64_to_string_vec = np.vectorize(_time_i64_to_string)
 
-#we can't use numba to accelerate _get_timestamp, so use np.vectorize here
+#we can't use numba to accelerate datetime.datetime ops, so use np.vectorize here
 @np.vectorize
-def _get_timestamp(dt):
-    '''get the timestamp from a datetime.datetime object'''
-    return dt.timestamp()
+def _time_datetime_to_datetime64(t : datetime.datetime):
+    '''get the i64 timestamp from a datetime.datetime object.
+    Converts the datetime to UTC first, datetime objects without tzinfo are treated as local time.
+    '''
+    return np.datetime64(t.astimezone(datetime.timezone.utc).replace(tzinfo=None))
 
 ## Procedure from Reda, Andreas (2004) ##
 
 ## 3.1. Calculate the Julian and Julian Ephemeris Day (JDE), centure, and millenium
 
 @register_jitable
-def _julian_day(t):
+def _julian_day(t_microseconds):
     """Calculate the Julian Day from posix timestamp (seconds since epoch)"""
     #TODO: check julian-gregorian calendar changeover for posix timestamps
-    year, month, day = _posix_time_to_date(t)
+    # divide by number of microseconds in a day
+    day_number, micros = divmod(t_microseconds,86400000000)
+    # use Neri-Schneider calendar algorithm to get Gregorian date
+    year,month,day = _time_day_to_date(day_number)
+    day += np.float64(micros)/86400000000 #add back in fractional day
+    
     # eq 4
     # 3.1.1) if M = 1 or 2, then Y = Y - 1 and M = M + 12
     if month <= 2:  
         month += 12
         year -= 1
-    # 3.1.1) B is equal to 0 for the Julian calendar and is equal to 
-    #    (2-A+INT(A/4)), A = INT(Y/100), for the Gregorian calendar.
-    a = int(year / 100)
-    b = 2 - a + int(a / 4)
-    jd = int(365.25 * (year + 4716)) + int(30.6001 * (month + 1)) + day + b - 1524.5
+    jd = int(365.25 * (year + 4716)) + int(30.6001 * (month + 1)) + day - 1524.5
+    if jd > 2299160:
+        # 3.1.1) B is equal to 0 for the Julian calendar and is equal to 
+        #    (2-A+INT(A/4)), A = INT(Y/100), for the Gregorian calendar.
+        a = int(year / 100)
+        b = 2 - a + int(a / 4)
+        jd += b
     return jd
 
 _julian_day_vec = np.vectorize(_julian_day)
@@ -1280,7 +1338,7 @@ def _topo_sunpos_vec_jit(t, latitude, longitude, elevation, Delta_t):
     return alpha_prime, delta_prime, H_prime
 
 @register_jitable
-def _sunpos(t, latitude, longitude, elevation, temperature, pressure, Delta_t, atmos_refract):
+def _sunpos(t, latitude, longitude, elevation, temperature, pressure, atmos_refract, Delta_t):
     """Compute the sun's topocentric azimuth (Φ [Phi]), zenith (θ [theta]), right ascension (α' [alpha_prime]), declination (δ' [delta_prime]), and hour angle (H' [H_prime])"""
     jd = _julian_day(t)
     latitude,longitude = _norm_lat_lon(latitude,longitude)
@@ -1291,7 +1349,7 @@ def _sunpos(t, latitude, longitude, elevation, temperature, pressure, Delta_t, a
 _sunpos_vec = np.vectorize(_sunpos)
 
 @njit
-def _sunpos_vec_jit(t, latitude, longitude, elevation, temperature, pressure, Delta_t, atmos_refract):
+def _sunpos_vec_jit(t, latitude, longitude, elevation, temperature, pressure, atmos_refract, Delta_t):
     '''Compute azimuth,zenith,RA,ec,H; vectorized for use with Numba
     Note that arguments must be broadcast in advance as numba's broadcast does not match numpy's with scalar arguments
     Return values must be unwrapped after calling because Numba can't handle dynamic return types
@@ -1299,15 +1357,15 @@ def _sunpos_vec_jit(t, latitude, longitude, elevation, temperature, pressure, De
     out_shape = t.shape #final output shape
     
     #flatten inputs
-    args_flat = t.flat, latitude.flat, longitude.flat, elevation.flat, temperature.flat, pressure.flat, Delta_t.flat, atmos_refract.flat
+    args_flat = t.flat, latitude.flat, longitude.flat, elevation.flat, temperature.flat, pressure.flat, atmos_refract.flat, Delta_t.flat
     n = len(args_flat[0])
     #allocate outputs as flat arrays
     Phi, theta = np.empty(n), np.empty(n)
     alpha_prime, delta_prime, H_prime = np.empty(n), np.empty(n), np.empty(n)
     #do calculations over flattened inputs
     for i, arg in enumerate(zip(*args_flat)):
-        t, lat, lon, elev, temp, press, dt, ar = arg
-        Phi[i], theta[i], alpha_prime[i], delta_prime[i], H_prime[i] = _sunpos(t, lat, lon, elev, temp, press, dt, ar)
+        t, lat, lon, elev, temp, press, ar, dt = arg
+        Phi[i], theta[i], alpha_prime[i], delta_prime[i], H_prime[i] = _sunpos(t, lat, lon, elev, temp, press, ar, dt)
     #reshape outputs to final dimensions
     Phi, theta = Phi.reshape(out_shape), theta.reshape(out_shape)
     alpha_prime, delta_prime, H_prime = alpha_prime.reshape(out_shape), delta_prime.reshape(out_shape), H_prime.reshape(out_shape)
