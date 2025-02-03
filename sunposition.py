@@ -115,18 +115,18 @@ def main(args=None, **kwargs):
     if args.test:
         return test(args)
 
-    t = _string_to_posix_time(args.time)
+    t = time_to_datetime64(args.time)
     lat, lon, elev = args.latitude, args.longitude, args.elevation
     temp, p, ar, dt = args.temperature, args.pressure, args.atmos_refract, args.dt 
     rad = args.radians
 
-    az, zen, ra, dec, h = sunpos(t, lat, lon, elev, temp, p, ar, dt, rad)
+    az, zen, ra, dec, h = sunposition(t, lat, lon, elev, temp, p, ar, dt, radians=rad)
     if args.csv:
         #machine readable
         print(f'{t}, {dt}, {lat}, {lon}, {elev}, {temp}, {p}, {az:0.6f}, {zen:0.6f}, {ra:0.6f}, {dec:0.6f}, {h:0.6f}')
     else:
         dr = 'rad' if args.radians else 'deg'
-        ts = _posix_time_to_string(t)
+        ts = time_to_iso8601(t)
         print(f"Computing sun position at T = {ts} + {dt} s")
         print(f"Lat, Lon, Elev = {lat} deg, {lon} deg, {elev} m")
         print(f"T, P = {temp} C, {p} mbar")
