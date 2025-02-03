@@ -168,7 +168,7 @@ _datetimes_valid = _datetimes_datetime64 + _datetimes_datetime + _datetimes_stri
 _datetimes_invalid = [s for t in _datetime_tuples_invalid for s in (_make_datetime_string_iso_v1(t), _make_datetime_string_iso_v2(t), _make_datetime_string_v1(t))]
 
 @pytest.fixture(params=_datetimes_valid)
-def datetime_valid(request : pytest.FixtureRequest) -> tuple[datetime.datetime|np.datetime64|str, np.datetime64]:
+def datetime_valid(request : pytest.FixtureRequest): # -> tuple[datetime.datetime|np.datetime64|str, np.datetime64]:  #type annotation break py3.9
     '''(test_value : datetime|datetime64|str, expected_value : datetime64)'''
     return request.param
 
@@ -177,14 +177,14 @@ def datetime_invalid(request : pytest.FixtureRequest) -> str:
     return request.param
 
 @pytest.fixture(params=[_datetimes_datetime64, _datetimes_datetime, _datetimes_string])
-def datetime_list(request : pytest.FixtureRequest) -> tuple[list[datetime.datetime|np.datetime64|str], list[np.datetime64]]:
+def datetime_list(request : pytest.FixtureRequest): # -> tuple[list[datetime.datetime|np.datetime64|str], list[np.datetime64]]: #type annotation break py3.9
     '''([val0, val1, ...], [expected0, expected1, ...]) : tuple(list[...], list[datetime64])'''
     # request.param is [(value, expected), ...]
     # we want to make 2 lists, one of values, one of expected
     # use zip(*x) to transpose, map(list, ...) to convert to list
     return tuple(map(list, zip(*request.param)))
 
-def test_time_to_datetime64(datetime_valid : tuple[datetime.datetime|np.datetime64|str, np.datetime64]):
+def test_time_to_datetime64(datetime_valid): #type annotation break py3.9 : tuple[datetime.datetime|np.datetime64|str, np.datetime64]):
     '''test sunposition.time_to_datetime64 with various input types'''
     t_test, t_expected = datetime_valid
     with warnings.catch_warnings():
@@ -193,7 +193,7 @@ def test_time_to_datetime64(datetime_valid : tuple[datetime.datetime|np.datetime
         t = sunposition.time_to_datetime64(t_test)
     assert t == t_expected
 
-def test_time_to_datetime64_list(datetime_list : tuple[list[datetime.datetime|np.datetime64|str], list[np.datetime64]]):
+def test_time_to_datetime64_list(datetime_list): # type annotations break py3.9 tuple[list[datetime.datetime|np.datetime64|str], list[np.datetime64]]
     t_test, t_expected = datetime_list
     with warnings.catch_warnings():
         warnings.simplefilter('error')
@@ -230,6 +230,8 @@ def test_time_to_iso8601(datetime_valid : np.datetime64):
     except:
         t_expected_datetime = None
     if t_expected_datetime is not None:
+        if t_iso_str.endswith('Z'):
+            t_iso_str = f'{t_iso_str[:-1]}+00:00'
         t_datetime = datetime.datetime.fromisoformat(t_iso_str)
         assert t_datetime == t_expected_datetime
     #test against the numpy.datetime64 parser, which can handle negative years, but not timezones

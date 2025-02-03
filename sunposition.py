@@ -47,7 +47,7 @@ _arg_parser.add_argument('-lon','--longitude',type=float,default=0.0,help='obser
 _arg_parser.add_argument('-e','--elevation',type=float,default=0,help='observer elevation, in meters')
 _arg_parser.add_argument('-T','--temperature',type=float,default=14.6,help='temperature, in degrees celcius')
 _arg_parser.add_argument('-p','--pressure',type=float,default=1013.0,help='atmospheric pressure, in millibar')
-_arg_parser.add_argument('-a','--atmos_refract',type=float,default=None,help='Atmospheric refraction at sunrise and sunset, in degrees. None to compute automatically, spa.c uses 0.5667')
+_arg_parser.add_argument('-a','--atmos_refract',type=float,default=None,help='Atmospheric refraction at sunrise and sunset, in degrees. Omit to compute automatically, spa.c uses 0.5667')
 _arg_parser.add_argument('-dt',type=float,default=0.0,help='difference between earth\'s rotation time (TT) and universal time (UT1)')
 _arg_parser.add_argument('-r','--radians',action='store_true',help='Output in radians instead of degrees')
 _arg_parser.add_argument('--csv',action='store_true',help='Comma separated values (time,dt,lat,lon,elev,temp,pressure,az,zen,RA,dec,H)')
@@ -302,13 +302,12 @@ def sunposition(t, latitude, longitude, elevation, temperature=None, pressure=No
         args = np.broadcast_arrays(t, latitude, longitude, elevation, temperature, pressure, atmos_refract, delta_t)
         for a in args: a.flags.writeable = False
         sp = _sunpos_vec_jit(*args)
-        sp = tuple(a[()] for a in sp) #unwrap np.array() from scalars
     else:
         sp = _sunpos_vec(t, latitude, longitude, elevation, temperature, pressure, atmos_refract, delta_t)
     if radians:
         sp = tuple(np.deg2rad(a) for a in sp)
-    az, zen, ra, dec, ha = sp
-    return az[()], zen[()], ra[()], dec[()], ha[()]
+    sp = tuple(a[()] for a in sp) #unwrap np.array() from scalars
+    return sp
 
 def topocentric_sunposition(t, latitude, longitude, elevation, delta_t=0, *, radians=False, jit=None):
     """Compute the topocentric coordinates of the sun as viewed at the given time and location.
@@ -342,11 +341,11 @@ def topocentric_sunposition(t, latitude, longitude, elevation, delta_t=0, *, rad
         args = np.broadcast_arrays(t, latitude, longitude, elevation, delta_t)
         for a in args: a.flags.writeable = False
         sp = _topo_sunpos_vec_jit(*args)
-        sp = tuple(a[()] for a in sp) #unwrap np.array() from scalars
     else:
         sp = _topo_sunpos_vec(t, latitude, longitude, elevation, delta_t)
     if radians:
         sp = tuple(np.deg2rad(a) for a in sp)
+    sp = tuple(a[()] for a in sp) #unwrap np.array() from scalars
     return sp
 
 def observed_sunposition(t, latitude, longitude, elevation, temperature=None, pressure=None, atmos_refract=None, delta_t=0, *, radians=False, jit=None):
