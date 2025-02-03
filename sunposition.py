@@ -1228,7 +1228,7 @@ def _sun_topo_ra_decl_hour(latitude, longitude, elevation, jd, delta_t = 0):
     alpha_prime = alpha + Delta_alpha
 
     # eq 39
-    delta_prime = np.rad2deg(np.arctan2((sin_delta - y*sin_xi)*np.cos(Delta_alpha_rad), cos_delta - y*sin_xi*cos_H))
+    delta_prime = np.rad2deg(np.arctan2((sin_delta - y*sin_xi)*np.cos(Delta_alpha_rad), cos_delta - x*sin_xi*cos_H))
 
     # eq 40
     H_prime = H - Delta_alpha
