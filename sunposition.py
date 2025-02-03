@@ -36,7 +36,7 @@ try:
 except:
     numba = None
 
-VERSION = '1.2.0'
+VERSION = '1.2.1'
 
 _arg_parser = argparse.ArgumentParser(prog='sunposition',description='Compute sun position parameters given the time and location')
 _arg_parser.add_argument('--version',action='version',version=f'%(prog)s {VERSION}')
