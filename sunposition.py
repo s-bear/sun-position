@@ -47,7 +47,7 @@ _arg_parser.add_argument('-lon','--longitude',type=float,default=0.0,help='obser
 _arg_parser.add_argument('-e','--elevation',type=float,default=0,help='observer elevation, in meters')
 _arg_parser.add_argument('-T','--temperature',type=float,default=14.6,help='temperature, in degrees celcius')
 _arg_parser.add_argument('-p','--pressure',type=float,default=1013.0,help='atmospheric pressure, in millibar')
-_arg_parser.add_argument('-a','--atmos_refract',type=float,default=None,help='Atmospheric refraction at sunrise and sunset, in degrees. Omit to compute automatically, spa.c uses 0.5667')
+_arg_parser.add_argument('-a','--atmos_refract',type=float,default=True,help='False to disable atmospheric refraction corrections. No correction is applied before/after sunrise/sunset. A value may be given to manually set the sunrise/sunset elevation below the horizon, spa.c uses 0.5667.')
 _arg_parser.add_argument('-dt',type=float,default=0.0,help='difference between earth\'s rotation time (TT) and universal time (UT1)')
 _arg_parser.add_argument('-r','--radians',action='store_true',help='Output in radians instead of degrees')
 _arg_parser.add_argument('--csv',action='store_true',help='Comma separated values (time,dt,lat,lon,elev,temp,pressure,az,zen,RA,dec,H)')
@@ -83,8 +83,10 @@ def main(args=None, **kwargs):
         temperature, in degrees celcius
     pressure : float
         atmospheric pressure, in millibar
-    atmos_refract : float
-        atmospheric refraction at sunrise and sunset, in degrees
+    atmos_refract : bool or float
+        True to enable, False to disable atmospheric refraction corrections.
+        No correction is applied when the sun is below the horizon. A float value may be given to
+        manually set the elevation below the horizon at which to stop applying the correction. spa.c uses 0.5667.
     dt : float
         difference between Earth's rotation time (TT) and universal time (UT1)
     radians : bool
@@ -255,7 +257,7 @@ def julian_day(t, *, jit=None):
         jd = _julian_day_vec(t)[()]
     return jd
 
-def sunposition(t, latitude, longitude, elevation, temperature=None, pressure=None, atmos_refract=None, delta_t=0, *, radians=False, jit=None):
+def sunposition(t, latitude, longitude, elevation, temperature=None, pressure=None, atmos_refract=True, delta_t=0, *, radians=False, jit=None):
     """Compute the observed and topocentric coordinates of the sun as viewed at the given time and location.
 
     Parameters
@@ -270,8 +272,10 @@ def sunposition(t, latitude, longitude, elevation, temperature=None, pressure=No
         celcius, default is 14.6 (global average in 2013)
     pressure : None or array_like of float, optional
         millibar, default is 1013 (global average in ??)
-    atmos_refract : None or array_like of float, optional
-        Atmospheric refraction at sunrise and sunset, in degrees. None to compute automatically, spa.c default is 0.5667.
+    atmos_refract : array_like of bool or float, optional
+        True to enable, False to disable atmospheric refraction corrections.
+        No correction is applied when the sun is below the horizon. A float value in degrees may be given to
+        manually set the elevation below the horizon at which to stop applying the correction. spa.c uses 0.5667.
     delta_t : array_like of float, optional
         seconds, default is 0, difference between the earth's rotation time (TT) and universal time (UT)
     radians : bool, optional
@@ -348,7 +352,7 @@ def topocentric_sunposition(t, latitude, longitude, elevation, delta_t=0, *, rad
     sp = tuple(a[()] for a in sp) #unwrap np.array() from scalars
     return sp
 
-def observed_sunposition(t, latitude, longitude, elevation, temperature=None, pressure=None, atmos_refract=None, delta_t=0, *, radians=False, jit=None):
+def observed_sunposition(t, latitude, longitude, elevation, temperature=None, pressure=None, atmos_refract=True, delta_t=0, *, radians=False, jit=None):
     """Compute the observed coordinates of the sun as viewed at the given time and location.
 
     Parameters
@@ -363,8 +367,10 @@ def observed_sunposition(t, latitude, longitude, elevation, temperature=None, pr
         celcius, default is 14.6 (global average in 2013)
     pressure : None or array_like of float, optional
         millibar, default is 1013 (global average in ??)
-    atmos_refract : None or array_like of float, optional
-        Atmospheric refraction at sunrise and sunset, in degrees. None to compute automatically, spa.c default is 0.5667.
+    atmos_refract : array_like of bool or float, optional
+        True to enable, False to disable atmospheric refraction corrections.
+        No correction is applied when the sun is below the horizon. A float value in degrees may be given to
+        manually set the elevation below the horizon at which to stop applying the correction. spa.c uses 0.5667.
     delta_t : array_like of float, optional
         seconds, default is 0, difference between the earth's rotation time (TT) and universal time (UT)
     radians : bool, optional
@@ -1135,8 +1141,9 @@ def _atmospheric_correction(e0, temperature, pressure, atmos_refract, sun_radius
         post-hoc whether the adjusted elevation is below the horizon, and remove the adjustment if not. This removes the
         necessity for the atmos_refract parameter (which would otherwise need to be recomputed for various temperatures/pressures)
     
-    To use the manual elevation threshold, (as per spa.c), specify atmos_refract
-    To use the automatic elevation threshold, use atmos_refract=None
+    To use the manual elevation threshold, (as per spa.c), specify atmos_refract as a float
+    To use the automatic elevation threshold, use atmos_refract=True
+    To avoid atmospheric correction completely, use atmos_refract=False
     '''
     # spa.c code:
     # Delta_e = 0
@@ -1146,12 +1153,18 @@ def _atmospheric_correction(e0, temperature, pressure, atmos_refract, sun_radius
 
     # eq 42
     Delta_e = (pressure / 1010.0) * (283.0 / (273.0 + temperature)) * 1.02 / (60.0 * np.tan(np.deg2rad(e0 + 10.3/(e0 + 5.11))))
+    
     # eq 43
-    if atmos_refract is None:
-        # our code path, check if the sun is above the horizon after applying the correction
-        e = e0 + Delta_e
-        if e < -sun_radius:
-            # the sun is below the horizon, remove the correction
+    if isinstance(atmos_refract, (bool, np.bool)):
+        # our code path -- automatic
+        if atmos_refract:
+            # check if the sun is above the horizon after applying the correction
+            e = e0 + Delta_e
+            if e < -sun_radius:
+                # the sun is below the horizon, remove the correction
+                e = e0
+        else:
+            # apply no correction
             e = e0
     else:
         # spa.c logic, estimate whether the sun is above the horizon using atmos_refract
